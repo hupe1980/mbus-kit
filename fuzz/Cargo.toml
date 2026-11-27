@@ -1,0 +1,36 @@
+[package]
+name = "mbus-kit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mbus-kit = { path = ".." }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "wired"
+path = "fuzz_targets/wired.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wireless"
+path = "fuzz_targets/wireless.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "records"
+path = "fuzz_targets/records.rs"
+test = false
+doc = false
+bench = false

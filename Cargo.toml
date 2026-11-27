@@ -1,0 +1,41 @@
+[package]
+name = "mbus-kit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "M-Bus and wireless M-Bus (EN 13757-2/-3/-4) for Rust: heat, water and gas meter readout with a sans-I/O, no_std, allocation-free core"
+homepage = "https://hupe1980.github.io/mbus-kit/"
+documentation = "https://docs.rs/mbus-kit"
+repository = "https://github.com/hupe1980/mbus-kit"
+license = "MIT OR Apache-2.0"
+keywords = ["mbus", "wmbus", "oms", "smart-meter", "metering"]
+categories = ["embedded", "encoding", "parser-implementations", "no-std"]
+include = ["/src", "/examples", "/README.md", "/CHANGELOG.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
+
+# No dependencies, on purpose (D-001). OMS decryption (AES) will arrive behind an
+# opt-in feature (ROADMAP M2), so a wired-only build never pulls in a cipher.
+[dependencies]
+
+[features]
+default = ["std"]
+# `std` adds `std::error::Error` for `Error` and nothing else.
+std = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[[example]]
+name = "readout"   # the EN 13757-3 reference water meter telegram, decoded
+path = "examples/readout.rs"
+required-features = ["std"]
+
+[[example]]
+name = "decode"    # hex on stdin (wired or wireless), records out
+path = "examples/decode.rs"
+required-features = ["std"]

@@ -1,0 +1,30 @@
+base_url = "https://hupe1980.github.io/mbus-kit"
+title = "mbus-kit"
+description = "M-Bus and wireless M-Bus (EN 13757) for Rust: heat, water and gas meter readout with a sans-I/O, no_std, allocation-free core and exact readings."
+default_language = "en"
+author = "hupe1980"
+
+compile_sass = false
+build_search_index = false
+generate_feeds = false
+minify_html = true
+
+[link_checker]
+internal_level = "error"
+
+[markdown]
+insert_anchor_links = "heading"
+smart_punctuation = false
+bottom_footnotes = true
+
+[markdown.highlighting]
+style = "class"
+light_theme = "ayu-light"
+dark_theme = "ayu-dark"
+
+[extra]
+repository = "https://github.com/hupe1980/mbus-kit"
+crate_name = "mbus-kit"
+crates_io = "https://crates.io/crates/mbus-kit"
+docs_rs = "https://docs.rs/mbus-kit"
+license = "MIT OR Apache-2.0"

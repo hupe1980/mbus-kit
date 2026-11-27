@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, "1.85"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+      - run: cargo test --no-default-features --lib
+      - name: the example runs, not only compiles
+        run: cargo run --example readout
+
+  # The claim that matters for firmware: the core builds with no allocator and no std.
+  no_std:
+    name: no_std (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [thumbv7em-none-eabihf, riscv32imac-unknown-none-elf, wasm32-unknown-unknown]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --target ${{ matrix.target }} --no-default-features
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings --cfg docsrs
+
+  # A release build for a microcontroller must contain no panic machinery: if a decoder
+  # can panic, the formatting code it needs is linked in and shows up here. LTO is off
+  # so the rlib holds object code rather than bitcode, which makes the check strictly
+  # harder: the library must be panic-free on its own.
+  panic_free:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - name: scan for panic symbols
+        run: |
+          set -euo pipefail
+          CARGO_PROFILE_RELEASE_LTO=false cargo build --release --target thumbv7em-none-eabihf --no-default-features
+          lib=$(find target/thumbv7em-none-eabihf/release -name 'libmbus_kit*.rlib' | head -1)
+          file "$lib" | grep -q 'ar archive' || { echo "::error::$lib is not object code"; exit 1; }
+          if nm "$lib" 2>/dev/null | grep -E 'core[0-9]+panicking|panic_fmt'; then
+            echo "::error::a panic path is reachable from the library"; exit 1
+          fi
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      - name: fuzz every decoder briefly
+        run: |
+          for t in wired wireless records; do
+            cargo fuzz run "$t" -- -max_total_time=60 -timeout=20 -rss_limit_mb=4096
+          done
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install zola
+        run: |
+          set -euo pipefail
+          VERSION=0.23.4
+          curl -sSfL "https://github.com/getzola/zola/releases/download/v${VERSION}/zola-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C /usr/local/bin zola
+      - run: zola --root site build
