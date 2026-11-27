@@ -116,7 +116,8 @@ jobs:
           exe=target/${{ matrix.target }}/release/mbus
           [ -f "$exe.exe" ] && exe="$exe.exe"
           if [ "${{ runner.os }}" = "Linux" ]; then
-            file "$exe" | grep -q "statically linked" || { file "$exe"; echo "::error::not static"; exit 1; }
+            # `file` says "statically linked" or, for a static PIE, "static-pie linked".
+            file "$exe" | grep -qE "statically linked|static-pie linked" || { file "$exe"; echo "::error::not static"; exit 1; }
           fi
           "$exe" --version
           "$exe" decode tests/corpus/wireless/oms-n2.3-mode7-afl.hex | grep -q "authenticated (counter 2739)"
