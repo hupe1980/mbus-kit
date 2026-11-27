@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-27
+
+### Fixed
+
+- The release workflow accepts the static PIE binaries the musl targets produce
+  (`file` reports them as "static-pie linked"); 0.1.0 shipped to crates.io only.
+- CI fuzzes on the glibc target (the prebuilt `cargo-fuzz` defaulted to musl, where the
+  sanitizers cannot run).
+
+### Changed
+
+- The README no longer describes the crate as part of a larger stack.
+
 ## [0.1.0] - 2026-11-27
 
 ### Added
@@ -157,5 +170,6 @@ All notable changes to this project are documented here. The format follows
 - Application layer (EN 13757-3), data records and values; the EN 13757-3 reference
   telegram decodes and re-encodes byte for byte.
 
-[Unreleased]: https://github.com/hupe1980/mbus-kit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hupe1980/mbus-kit/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/hupe1980/mbus-kit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/hupe1980/mbus-kit/releases/tag/v0.1.0

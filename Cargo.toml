@@ -1,6 +1,6 @@
 [package]
 name = "mbus-kit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "M-Bus and wireless M-Bus (EN 13757-2/-3/-4) for Rust: heat, water and gas meter readout with a sans-I/O, no_std, allocation-free core"
