@@ -104,14 +104,6 @@ every command writes one JSON object per telegram:
 {"meter":{"manufacturer":"ELS","id":"12345678","version":51,"medium":"gas","medium_code":3},"ci":"7A","access":117,"status":0,"authenticity":"authenticated","counter":2739,"body":"records","records":[{"name":"volume","function":"instantaneous","storage":0,"tariff":0,"subunit":0,"modifiers":[],"value":28504.27,"unit":"m3","encrypted":true,"text":"volume — 28504.27 m³"}, …]}
 ```
 
-## Part of Open Utility Stack
-
-mbus-kit is a protocol crate for the
-[Open Utility Stack](https://hupe1980.github.io/open-utility-stack/): water, gas and heat
-meters for [imsys](https://github.com/hupe1980/imsys) (the gateway's meter side) and
-[ems](https://github.com/hupe1980/ems), and the basis for water and heat billing. Its
-siblings for meters are [sml-kit](https://github.com/hupe1980/sml-kit) and
-[dlms-cosem-kit](https://github.com/hupe1980/dlms-cosem-kit).
 
 ## License
 

@@ -146,7 +146,9 @@ jobs:
       - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2
         with:
           tool: cargo-fuzz
-      - run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60 -timeout=20 -rss_limit_mb=4096
+      # The prebuilt cargo-fuzz is a musl binary and would default to its own target, where
+      # the sanitizers cannot run: name the glibc target.
+      - run: cargo fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=60 -timeout=20 -rss_limit_mb=4096
       - name: keep the crashing input
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
