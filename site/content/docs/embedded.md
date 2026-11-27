@@ -7,9 +7,9 @@ weight = 30
 ## No std, no allocator, no dependencies
 
 ```toml
-mbus-kit = { version = "0.1", default-features = false }
+mbus-kit = { version = "0.2", default-features = false }
 # with OMS decryption:
-mbus-kit = { version = "0.1", default-features = false, features = ["oms"] }
+mbus-kit = { version = "0.2", default-features = false, features = ["oms"] }
 ```
 
 The default build has no dependencies and never allocates, with or without `std`. The

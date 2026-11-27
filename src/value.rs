@@ -19,7 +19,7 @@ pub enum Value<'a> {
     InvalidBcd(&'a [u8]),
     /// A 32-bit IEEE 754 real, as raw bits. [`Value::as_decimal`] and
     /// [`Record::quantity`](crate::Record::quantity) give its exact decimal value; no
-    /// float is involved (D-012).
+    /// float is involved.
     Real32(u32),
     /// A date (type G).
     Date(Date),
@@ -86,7 +86,7 @@ fn hex<'b>(f: &mut fmt::Formatter<'_>, bytes: impl Iterator<Item = &'b u8>) -> f
 impl Value<'_> {
     /// The value as an exact decimal `mantissa × 10^exponent`: integers and valid BCD
     /// with exponent 0, and 32-bit reals converted exactly (every finite IEEE 754
-    /// single is a finite decimal; D-012). `None` for NaN, infinities, reals too large
+    /// single is a finite decimal). `None` for NaN, infinities, reals too large
     /// or too small for an `i128` mantissa, and non-numeric values.
     pub fn as_decimal(&self) -> Option<(i128, i8)> {
         match *self {

@@ -1,6 +1,6 @@
 [package]
 name = "mbus-kit"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "M-Bus and wireless M-Bus (EN 13757-2/-3/-4) for Rust: heat, water and gas meter readout with a sans-I/O, no_std, allocation-free core"
@@ -12,7 +12,7 @@ keywords = ["mbus", "wmbus", "oms", "smart-meter", "metering"]
 categories = ["embedded", "encoding", "parser-implementations", "no-std"]
 include = ["/src", "/examples", "/README.md", "/CHANGELOG.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
-# No dependencies in the default build, on purpose (D-001). The `oms` feature adds the
+# No dependencies in the default build, on purpose. The `oms` feature adds the
 # RustCrypto AES modes and `zeroize` for OMS security; nothing else ever.
 [dependencies]
 aes = { version = "0.8", default-features = false, optional = true }

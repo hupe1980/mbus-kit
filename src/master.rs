@@ -26,8 +26,12 @@
 //!         _ => {}
 //!     }
 //! }
-//! assert!(readout.is_complete());
+//! assert!(readout.is_complete()); // or readout.outcome(): why it is not
 //! ```
+//!
+//! Hand `reply` exactly one frame ([`wired::scan`] finds it behind noise or an echo).
+//! A readout delivers only telegrams from the meter it addresses and says how it ended
+//! ([`Outcome`]): a telegram limit or a broken page is never "complete".
 
 use core::fmt;
 
@@ -368,7 +372,7 @@ pub enum Event<'a> {
     /// The bytes are the start of a frame: read more and call `reply` again with all of
     /// them.
     NeedMore,
-    /// A telegram with records (for a readout).
+    /// A telegram with records (for a readout), from the addressed meter.
     Telegram(Application<'a>),
     /// A meter was found (for a search).
     Found(Address),
@@ -383,6 +387,46 @@ pub enum Event<'a> {
     NoReply,
     /// A valid frame that cannot be decoded as a telegram.
     Invalid(Error),
+    /// A meter acknowledged this selection (for a search), but its reply to the read
+    /// did not name a meter that matches it: no reply, no long header, or another
+    /// identification number.
+    Unreadable(SecondaryAddress),
+    /// A telegram from another meter than the readout expects (the identity that
+    /// answered; `None` when the telegram carries none). Not delivered; the readout ends.
+    WrongMeter(Option<Address>),
+}
+
+/// How a readout ended: see [`Readout::outcome`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The meter sent its last telegram (no "more records follow"), or answered `E5`
+    /// instead of data: every record was read.
+    Complete,
+    /// The meter still has records, but [`Readout::max_telegrams`] telegrams were read.
+    /// The telegrams delivered are only the first part of the meter's data.
+    LimitReached,
+    /// A reply was not a decodable telegram, or one of its records is broken (so
+    /// whether more follow is unknown); [`Error::InvalidAddress`] for 251, 252 and 255.
+    Invalid(Error),
+    /// A telegram came from another meter than expected ([`Readout::expect_meter`], the
+    /// selection of a secondary target, or the first telegram of this readout). It was
+    /// not delivered. The identity is the one that answered (`None`: it sent none).
+    WrongMeter(Option<Address>),
+    /// No valid reply after every retry.
+    NoReply,
+}
+
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Complete => f.write_str("complete"),
+            Self::LimitReached => f.write_str("telegram limit reached, the meter has more records"),
+            Self::Invalid(e) => write!(f, "invalid telegram: {e}"),
+            Self::WrongMeter(Some(a)) => write!(f, "another meter answered: {a}"),
+            Self::WrongMeter(None) => f.write_str("another meter answered (without an identity)"),
+            Self::NoReply => f.write_str("the meter does not answer"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -392,13 +436,32 @@ enum ReadState {
     Read,
     Deselect,
     Done,
-    Failed,
 }
 
 /// Read every telegram of one meter: `SND_NKE` (primary) or selection (secondary), then
 /// `REQ_UD2` with the frame count bit toggled until no more records follow, then
 /// deselection (secondary). A request without a valid reply is repeated with the same
-/// FCB, [`RETRIES`] times.
+/// FCB, [`RETRIES`] times. When it is over, [`Readout::outcome`] says whether every
+/// telegram was read, or why not.
+///
+/// # What counts as a reply
+///
+/// Hand [`Readout::reply`] the bytes of **exactly one frame**. On a line with noise or a
+/// converter that echoes, cut the frame out of the receive buffer with [`wired::scan`]
+/// (as [`serial::Bus`](crate::serial) does). Bytes after the frame make the reply garbled:
+/// two slaves answered at once.
+///
+/// During a read, only a slave's response (`RSP_UD`, [`control::is_response`]) from the
+/// requested primary address is a telegram (any address for 253 and 254, and for a
+/// secondary target, which answers via 253). Anything else is handled like a garbled
+/// reply: repeated, then [`Outcome::NoReply`]. Every telegram must also carry the expected
+/// identity: the one given to [`Readout::expect_meter`], the selection of a secondary
+/// target, and the identity of the first telegram; otherwise the readout ends with
+/// [`Outcome::WrongMeter`].
+///
+/// These checks attribute data to a meter; they do not authenticate it. Wired M-Bus has
+/// no authentication: any device on the line can send a frame with any address and
+/// identity.
 #[derive(Clone, Debug)]
 pub struct Readout {
     target: Target,
@@ -408,6 +471,10 @@ pub struct Readout {
     retries: u8,
     telegrams: u8,
     max_telegrams: u8,
+    expect: Option<SecondaryAddress>,
+    /// The identity of the first telegram (once `telegrams > 0`).
+    first: Option<Address>,
+    outcome: Option<Outcome>,
 }
 
 impl Readout {
@@ -415,9 +482,24 @@ impl Readout {
     pub const fn new(target: Target) -> Self {
         // Secondary: deselect every slave first (SND_NKE to FD), so no stale selection
         // answers along.
-        let state = ReadState::Reset;
-        let _ = target;
-        Self { target, state, fcb: true, tries: 0, retries: RETRIES, telegrams: 0, max_telegrams: 16 }
+        let (state, outcome) = match target {
+            Target::Primary(a @ (251 | 252 | BROADCAST)) => {
+                (ReadState::Done, Some(Outcome::Invalid(Error::InvalidAddress(a))))
+            }
+            _ => (ReadState::Reset, None),
+        };
+        Self {
+            target,
+            state,
+            fcb: true,
+            tries: 0,
+            retries: RETRIES,
+            telegrams: 0,
+            max_telegrams: 16,
+            expect: None,
+            first: None,
+            outcome,
+        }
     }
 
     /// Repeat a request at most `retries` times.
@@ -427,10 +509,21 @@ impl Readout {
         self
     }
 
-    /// Stop after `max` telegrams even if the meter says more follow.
+    /// Read at most `max` telegrams (at least 1). A meter that still has records after
+    /// them ends the readout with [`Outcome::LimitReached`], not [`Outcome::Complete`].
     #[must_use]
     pub const fn max_telegrams(mut self, max: u8) -> Self {
         self.max_telegrams = max;
+        self
+    }
+
+    /// Accept only telegrams from this meter (the identity printed on it, wildcards
+    /// allowed): e.g. bind a primary address to `SecondaryAddress::exact(&address)`. A
+    /// telegram with another identity, or none, ends the readout with
+    /// [`Outcome::WrongMeter`].
+    #[must_use]
+    pub const fn expect_meter(mut self, meter: SecondaryAddress) -> Self {
+        self.expect = Some(meter);
         self
     }
 
@@ -455,59 +548,82 @@ impl Readout {
         })
     }
 
-    /// Whether every telegram was read.
-    pub const fn is_complete(&self) -> bool {
-        matches!(self.state, ReadState::Done)
+    /// How the readout ended; `None` while it runs (including the deselection).
+    pub const fn outcome(&self) -> Option<Outcome> {
+        match self.state {
+            ReadState::Done => self.outcome,
+            _ => None,
+        }
     }
 
-    /// How many telegrams were read.
+    /// Whether every telegram was read: [`Outcome::Complete`].
+    pub const fn is_complete(&self) -> bool {
+        matches!(self.outcome(), Some(Outcome::Complete))
+    }
+
+    /// How many telegrams were delivered.
     pub const fn telegrams(&self) -> u8 {
         self.telegrams
     }
 
-    fn advance(&mut self, next: ReadState) {
+    const fn advance(&mut self, next: ReadState) {
         self.state = next;
         self.tries = 0;
     }
 
-    fn after_read(&self) -> ReadState {
-        match self.target {
-            Target::Primary(_) => ReadState::Done,
-            Target::Secondary(_) => ReadState::Deselect,
-        }
+    /// End the readout; a secondary target that may be selected is deselected first.
+    const fn finish(&mut self, outcome: Outcome) {
+        self.outcome = Some(outcome);
+        let next = match (self.target, self.state) {
+            (Target::Secondary(_), ReadState::Select | ReadState::Read) => ReadState::Deselect,
+            _ => ReadState::Done,
+        };
+        self.advance(next);
     }
 
     /// The timeout passed without a valid reply (`received` is ignored: a readout
     /// repeats the request either way).
     pub fn timeout(&mut self, received: &[u8]) -> Event<'static> {
         let _ = received;
-        if let (ReadState::Reset, Target::Secondary(_)) = (self.state, self.target) {
+        match (self.state, self.target) {
             // Unselected slaves need not answer the deselection: go on to the selection.
-            self.advance(ReadState::Select);
-            return Event::NoReply;
-        }
-        if self.state == ReadState::Deselect {
-            // A deselection is not acknowledged by every slave; the data is complete.
-            self.advance(ReadState::Done);
-            return Event::NoReply;
+            (ReadState::Reset, Target::Secondary(_)) => {
+                self.advance(ReadState::Select);
+                return Event::NoReply;
+            }
+            // Not every slave acknowledges a deselection; the outcome stands.
+            (ReadState::Deselect, _) => {
+                self.advance(ReadState::Done);
+                return Event::NoReply;
+            }
+            (ReadState::Done, _) => return Event::NoReply,
+            _ => {}
         }
         if self.tries < self.retries {
             self.tries += 1;
             Event::Retrying
         } else {
-            self.state = ReadState::Failed;
+            self.finish(Outcome::NoReply);
             Event::NoReply
         }
     }
 
-    /// Hand over what arrived: the bytes from the start of the reply.
-    pub fn reply<'a>(&mut self, bytes: &'a [u8]) -> Event<'a> {
-        let frame = match Frame::parse(bytes) {
+    /// Hand over what arrived: the bytes of one frame (see [the rules](Readout#what-counts-as-a-reply)).
+    pub fn reply<'a>(&mut self, frame: &'a [u8]) -> Event<'a> {
+        let (parsed, used) = match Frame::parse(frame) {
             Ok(None) => return Event::NeedMore,
-            Ok(Some((frame, _))) => frame,
-            Err(_) => return self.timeout(bytes),
+            Ok(Some(parsed)) => parsed,
+            Err(_) => return self.timeout(frame),
         };
-        match (self.state, frame) {
+        if self.state == ReadState::Deselect {
+            self.advance(ReadState::Done);
+            return Event::Acknowledged;
+        }
+        if used != frame.len() {
+            // Bytes after the frame: two answers overlapped.
+            return self.timeout(frame);
+        }
+        match (self.state, parsed) {
             (ReadState::Reset, Frame::Ack) => {
                 // EN 13757-2: after SND_NKE the next REQ_UD2 has FCB set.
                 self.fcb = true;
@@ -523,39 +639,71 @@ impl Readout {
                 self.advance(ReadState::Read);
                 Event::Acknowledged
             }
-            (ReadState::Deselect, _) => {
-                self.advance(ReadState::Done);
+            // E5 instead of the next page: the slave has nothing more to send. Before the
+            // first page, an E5 is a late or doubled acknowledgement, not data.
+            (ReadState::Read, Frame::Ack) if self.telegrams > 0 => {
+                self.finish(Outcome::Complete);
                 Event::Acknowledged
             }
-            // E5 instead of data: the slave has nothing (more) to send.
-            (ReadState::Read, Frame::Ack) => {
-                self.advance(self.after_read());
-                Event::Acknowledged
+            (ReadState::Read, Frame::Long { c, a, ci, data }) if self.answers(c, a) => {
+                self.telegram(ci, data)
             }
-            (ReadState::Read, Frame::Long { ci, data, .. }) => match Application::parse(ci, data) {
-                Ok(app) => {
-                    self.telegrams = self.telegrams.saturating_add(1);
-                    let more =
-                        app.records().is_some_and(|r| more_follows(r)) && self.telegrams < self.max_telegrams;
-                    self.fcb = !self.fcb;
-                    let next = if more { ReadState::Read } else { self.after_read() };
-                    self.advance(next);
-                    Event::Telegram(app)
-                }
-                Err(e) => {
-                    self.advance(self.after_read());
-                    Event::Invalid(e)
-                }
-            },
-            _ => self.timeout(bytes),
+            _ => self.timeout(frame),
         }
+    }
+
+    /// A slave's response from the address asked.
+    const fn answers(&self, c: u8, a: u8) -> bool {
+        control::is_response(c)
+            && match self.target {
+                Target::Primary(p) if p <= 250 => a == p,
+                _ => true,
+            }
+    }
+
+    fn telegram<'a>(&mut self, ci: u8, data: &'a [u8]) -> Event<'a> {
+        let app = match Application::parse(ci, data) {
+            Ok(app) => app,
+            Err(e) => {
+                self.finish(Outcome::Invalid(e));
+                return Event::Invalid(e);
+            }
+        };
+        let meter = app.meter();
+        let selection = match self.target {
+            Target::Secondary(s) => Some(s),
+            Target::Primary(_) => None,
+        };
+        let fits = |p: &SecondaryAddress| *p == SecondaryAddress::ANY || meter.is_some_and(|m| p.matches(&m));
+        let same = self.telegrams == 0 || self.first == meter;
+        if !(selection.iter().chain(&self.expect).all(fits) && same) {
+            self.finish(Outcome::WrongMeter(meter));
+            return Event::WrongMeter(meter);
+        }
+        self.first = meter;
+        self.telegrams = self.telegrams.saturating_add(1);
+        self.fcb = !self.fcb;
+        match app.records().map(more_follows) {
+            // A broken record hides whether `1F` follows: not complete.
+            Some(Err(e)) => self.finish(Outcome::Invalid(e)),
+            None | Some(Ok(false)) => self.finish(Outcome::Complete),
+            Some(Ok(true)) if self.telegrams >= self.max_telegrams.max(1) => {
+                self.finish(Outcome::LimitReached);
+            }
+            Some(Ok(true)) => self.advance(ReadState::Read),
+        }
+        Event::Telegram(app)
     }
 }
 
-/// Whether a telegram's records end with `1F` (more records follow).
-fn more_follows(mut records: crate::Records<'_>) -> bool {
-    for _ in records.by_ref() {}
-    records.more_follows()
+/// Whether a telegram's records end with `1F` (more records follow); the first broken
+/// record otherwise.
+#[allow(clippy::needless_pass_by_value)] // used as `.map(more_follows)`
+fn more_follows(mut records: crate::Records<'_>) -> Result<bool> {
+    for r in records.by_ref() {
+        r?;
+    }
+    Ok(records.more_follows())
 }
 
 /// A secondary-address search (wildcard scan): finds every meter on the bus.
@@ -595,13 +743,13 @@ impl Search {
             tries: 0,
             retries: RETRIES,
             selections: 0,
-            max_selections: 20_000,
+            max_selections: 25_000,
             exhausted: false,
         }
     }
 
-    /// Give up after `max` selections (default 20 000: a bus of 250 meters needs at most
-    /// 10 × 8 × 251). A stuck line or a babbling device makes every probe look like a
+    /// Give up after `max` selections (default 25 000: a bus of 250 meters needs at most
+    /// 10 × 8 × 251 = 20 080). A stuck line or a babbling device makes every probe look like a
     /// collision, and the full tree has 10⁸ prefixes.
     #[must_use]
     pub const fn max_selections(mut self, max: u32) -> Self {
@@ -680,9 +828,19 @@ impl Search {
             self.tries += 1;
             return Event::Retrying;
         }
-        // No meter under this prefix (or the selected one did not answer the read).
+        if self.reading {
+            // The selection was acknowledged, the read never was: report, don't drop.
+            return self.unreadable();
+        }
+        // No meter under this prefix.
         self.next_sibling();
         Event::NoReply
+    }
+
+    fn unreadable(&mut self) -> Event<'static> {
+        let probe = self.probe();
+        self.next_sibling();
+        Event::Unreadable(probe)
     }
 
     /// Several meters answered: fix one more digit, starting at 0.
@@ -714,12 +872,19 @@ impl Search {
                 self.tries = 0;
                 Event::Acknowledged
             }
-            Ok(Some((Frame::Long { ci, data, .. }, _))) if self.reading => {
-                let found = Application::parse(ci, data).ok().and_then(|a| a.meter());
-                self.next_sibling();
-                found.map_or(Event::NoReply, Event::Found)
+            // E5 to the read: the selected meter answered, but not with data.
+            Ok(Some((Frame::Ack, _))) => self.timeout(&[]),
+            Ok(Some((Frame::Long { c, ci, data, .. }, _))) if self.reading && control::is_response(c) => {
+                let probe = self.probe();
+                match Application::parse(ci, data).ok().and_then(|a| a.meter()) {
+                    Some(meter) if probe.matches(&meter) => {
+                        self.next_sibling();
+                        Event::Found(meter)
+                    }
+                    _ => self.unreadable(),
+                }
             }
-            // Garbled, or an E5 that was two overlapping E5s: several meters answered.
+            // Garbled: several meters answered.
             _ => self.collision(),
         }
     }

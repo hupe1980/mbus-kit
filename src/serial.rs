@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use std::vec::Vec;
 
 use crate::app::{Address, Application};
-use crate::master::{Baud, Event, Readout, Request, Search, SecondaryAddress, Target};
+use crate::master::{Baud, Event, Outcome, Readout, Request, Search, SecondaryAddress, Target};
 use crate::wired::Frame;
 
 /// What can go wrong on a real bus.
@@ -41,9 +41,16 @@ use crate::wired::Frame;
 pub enum Error {
     /// The port failed.
     Io(io::Error),
-    /// The meter did not answer, after every retry.
-    NoReply,
-    /// The meter answered with a frame that is not a valid telegram.
+    /// The readout ended before the meter's data did: `outcome` says why (the meter does
+    /// not answer, the telegram limit, an undecodable telegram, another meter).
+    /// `telegrams` holds what was read before, which is only part of the meter's data.
+    Incomplete {
+        /// Why the readout is not complete; never [`Outcome::Complete`].
+        outcome: Outcome,
+        /// The telegrams read before it ended.
+        telegrams: Vec<Telegram>,
+    },
+    /// A telegram could not be decoded.
     Invalid(crate::Error),
 }
 
@@ -51,7 +58,9 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(e) => write!(f, "port: {e}"),
-            Self::NoReply => f.write_str("the meter does not answer"),
+            Self::Incomplete { outcome, telegrams } => {
+                write!(f, "incomplete readout after {} telegram(s): {outcome}", telegrams.len())
+            }
             Self::Invalid(e) => write!(f, "invalid reply: {e}"),
         }
     }
@@ -62,7 +71,7 @@ impl std::error::Error for Error {
         match self {
             Self::Io(e) => Some(e),
             Self::Invalid(e) => Some(e),
-            Self::NoReply => None,
+            Self::Incomplete { .. } => None,
         }
     }
 }
@@ -113,6 +122,9 @@ pub struct Found {
     pub meters: Vec<Address>,
     /// Identification numbers several meters share (see [`master::Event::Ambiguous`](crate::master::Event::Ambiguous)).
     pub ambiguous: Vec<SecondaryAddress>,
+    /// Selections a meter acknowledged without then naming itself (see
+    /// [`master::Event::Unreadable`](crate::master::Event::Unreadable)).
+    pub unreadable: Vec<SecondaryAddress>,
     /// Whether the whole bus was covered; `false` when the search gave up at its
     /// selection limit (a stuck line, a babbling device).
     pub complete: bool,
@@ -130,6 +142,15 @@ pub struct Bus<P> {
 /// After the last byte, how long the line must stay quiet before a reply is complete:
 /// generous for USB converters that deliver in chunks (FTDI latency timer 16 ms).
 const IDLE: Duration = Duration::from_millis(40);
+
+/// How long `bytes` take on the line at `baud` (11 bits each: start, 8 data, parity, stop).
+fn transfer(bytes: usize, baud: Baud) -> Duration {
+    let bits = u64::try_from(bytes.saturating_mul(11)).unwrap_or(u64::MAX);
+    Duration::from_millis(bits.saturating_mul(1000) / u64::from(baud.bits_per_second()).max(1))
+}
+
+/// The most noise bytes in front of a converter's echo of the request.
+const ECHO_NOISE: usize = 4;
 
 /// The most bytes kept for one reply: more is noise, and the read ends.
 const MAX_REPLY: usize = 512;
@@ -166,12 +187,14 @@ impl<P: Read + Write> Bus<P> {
         self.port
     }
 
-    /// Read every telegram of one meter.
+    /// Read every telegram of one meter. Anything but a complete readout is an error
+    /// ([`Error::Incomplete`]).
     pub fn readout(&mut self, target: Target) -> Result<Vec<Telegram>, Error> {
         self.run_readout(Readout::new(target))
     }
 
-    /// Read every telegram with a configured [`Readout`] (retries, telegram limit).
+    /// Read every telegram with a configured [`Readout`] (retries, telegram limit,
+    /// expected meter). `Ok` only when the readout is [complete](Outcome::Complete).
     pub fn run_readout(&mut self, mut readout: Readout) -> Result<Vec<Telegram>, Error> {
         let mut telegrams = Vec::new();
         while let Some(request) = readout.next_request() {
@@ -187,7 +210,8 @@ impl<P: Read + Write> Bus<P> {
                 let reply = self.rx.get(start..).unwrap_or(&[]);
                 // Skip line noise in front of the frame (wired::scan); wait for the rest of
                 // a frame that has started.
-                let frame = match crate::wired::scan(reply) {
+                let scan = if more { crate::wired::scan(reply) } else { crate::wired::scan_ended(reply) };
+                let frame = match scan {
                     crate::wired::Scan::Frame { skip, len, .. } => reply.get(skip..skip + len),
                     crate::wired::Scan::NeedMore { .. } if more => continue,
                     crate::wired::Scan::NeedMore { .. } => None,
@@ -196,17 +220,17 @@ impl<P: Read + Write> Bus<P> {
                     Some(frame) => readout.reply(frame),
                     None => readout.timeout(reply),
                 };
-                match event {
-                    Event::Telegram(_) => {
-                        telegrams.push(Telegram { frame: frame.unwrap_or_default().to_vec() });
-                    }
-                    Event::Invalid(e) => return Err(Error::Invalid(e)),
-                    _ => {}
+                if let Event::Telegram(_) = event {
+                    telegrams.push(Telegram { frame: frame.unwrap_or_default().to_vec() });
                 }
                 break;
             }
         }
-        if readout.is_complete() { Ok(telegrams) } else { Err(Error::NoReply) }
+        // The state machine ends every readout (after deselecting a secondary target).
+        match readout.outcome() {
+            Some(Outcome::Complete) => Ok(telegrams),
+            outcome => Err(Error::Incomplete { outcome: outcome.unwrap_or(Outcome::NoReply), telegrams }),
+        }
     }
 
     /// Find every meter on the bus by secondary address (wildcard search). Each
@@ -229,6 +253,7 @@ impl<P: Read + Write> Bus<P> {
             match event {
                 Event::Found(meter) => found.meters.push(meter),
                 Event::Ambiguous(id) => found.ambiguous.push(id),
+                Event::Unreadable(id) => found.unreadable.push(id),
                 // A truncated frame at the end of the window: as good as garbage.
                 Event::NeedMore => {
                     search.timeout(reply);
@@ -249,22 +274,34 @@ impl<P: Read + Write> Bus<P> {
         }
         let deadline = self.deadline(request);
         let mut start = 0;
+        let ack =
+            |rx: &[u8]| matches!(crate::wired::scan(rx), crate::wired::Scan::Frame { frame: Frame::Ack, .. });
         while self.receive(deadline, request.bytes(), &mut start)? {
-            if self.rx.get(start..) == Some(&[0xE5][..]) {
+            if ack(self.rx.get(start..).unwrap_or(&[])) {
                 return Ok(true);
             }
         }
-        Ok(self.rx.get(start..) == Some(&[0xE5][..]))
+        Ok(matches!(
+            crate::wired::scan_ended(self.rx.get(start..).unwrap_or(&[])),
+            crate::wired::Scan::Frame { frame: Frame::Ack, .. }
+        ))
     }
 
     fn deadline(&self, request: &Request) -> Window {
-        let first =
-            Instant::now() + Duration::from_millis(u64::from(request.timeout_ms(self.baud))) + self.slack;
-        // The longest reply worth waiting for: echo, a 261-byte frame and some noise, at
-        // 11 bits per byte, then a quiet line. A port that never falls silent ends here.
-        let bits = u64::try_from(MAX_REPLY * 11).unwrap_or(u64::MAX);
-        let transfer = Duration::from_millis(bits * 1000 / u64::from(self.baud.bits_per_second()).max(1));
-        Window { first, hard: first + transfer + IDLE + self.slack }
+        // `flush` returns before the request is on the line (a USB converter, a socket):
+        // the response timeout runs from its last bit.
+        let first = Instant::now()
+            + transfer(request.bytes().len(), self.baud)
+            + Duration::from_millis(u64::from(request.timeout_ms(self.baud)))
+            + self.slack;
+        // The longest reply worth waiting for: echo, a 261-byte frame and some noise, then
+        // a quiet line. A port that never falls silent ends here.
+        Window { first, hard: first + transfer(MAX_REPLY, self.baud) + self.idle() + self.slack }
+    }
+
+    /// The quiet time that ends a reply: [`IDLE`] plus three character times.
+    fn idle(&self) -> Duration {
+        IDLE + transfer(3, self.baud)
     }
 
     fn send(&mut self, request: &Request) -> io::Result<()> {
@@ -278,7 +315,8 @@ impl<P: Read + Write> Bus<P> {
     /// when the reply is over. `start` skips an echo of `sent`.
     fn receive(&mut self, window: Window, sent: &[u8], start: &mut usize) -> io::Result<bool> {
         let mut chunk = [0u8; 256];
-        let mut until = if self.rx.len() > *start { Instant::now() + IDLE } else { window.first };
+        let idle = self.idle();
+        let mut until = if self.rx.len() > *start { Instant::now() + idle } else { window.first };
         loop {
             if self.rx.len() >= MAX_REPLY || Instant::now() >= window.hard {
                 return Ok(false);
@@ -297,10 +335,14 @@ impl<P: Read + Write> Bus<P> {
             };
             if let Some(bytes) = chunk.get(..n).filter(|b| !b.is_empty()) {
                 self.rx.extend_from_slice(bytes);
-                // A converter that echoes: the request comes back first.
-                if *start == 0 && self.rx.len() >= sent.len() && self.rx.starts_with(sent) {
-                    *start = sent.len();
-                    until = window.first.max(Instant::now() + IDLE);
+                // A converter that echoes: the request comes back first, perhaps after a
+                // byte or two of noise from switching the line.
+                if *start == 0 {
+                    if let Some(at) = self.rx.windows(sent.len()).take(ECHO_NOISE + 1).position(|w| w == sent)
+                    {
+                        *start = at + sent.len();
+                        until = window.first.max(Instant::now() + idle);
+                    }
                 }
                 if self.rx.len() > *start {
                     return Ok(true);

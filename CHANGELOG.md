@@ -6,6 +6,43 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
+A wired readout no longer hands over data it cannot vouch for.
+
+### Changed (breaking)
+
+- `Readout::outcome()`: `Complete`, `LimitReached`, `Invalid`, `WrongMeter` or
+  `NoReply`. `is_complete()` is true only for `Complete`; a readout cut off by its
+  telegram limit or by a broken record used to count as complete.
+- `serial::Error::Incomplete { outcome, telegrams }` replaces `Error::NoReply`:
+  `Bus::readout` is `Ok` only for a complete readout. `mbus read` prints what it got and
+  exits 1.
+- `Readout::reply` takes exactly one frame and accepts during a read only an `RSP_UD`
+  from the requested primary address (any for 254 and secondary targets); anything else
+  is a garbled reply. `Search` checks the control field too.
+- An `E5` before the first telegram is repeated, not "complete with no data".
+- Primary addresses 251, 252 and 255 are refused before anything is sent
+  (`Error::InvalidAddress`).
+- `Search::max_selections` defaults to 25 000 (250 meters need up to 20 080).
+
+### Added
+
+- `Readout::expect_meter(SecondaryAddress)`: bind a readout to the meter's printed
+  identity. Secondary readouts are bound to their selection, and every telegram must come
+  from the first telegram's meter (`Outcome::WrongMeter`).
+- `Event::Unreadable` and `serial::Found::unreadable`: a meter that acknowledges a
+  selection but does not name itself is reported, not dropped.
+- `wired::scan_ended`, `wired::control::is_response`.
+
+### Fixed
+
+- A secondary readout that ends early deselects, also in the serial driver.
+- `serial::Bus` starts the response timeout after the request's transmission time, finds
+  a converter's echo behind noise, scales the end-of-reply gap with the baud rate, and
+  accepts an `E5` with noise around it in `command`.
+- `Readout::timeout` after the end no longer answers `Retrying`.
+
 ## [0.1.1] - 2026-11-27
 
 ### Fixed

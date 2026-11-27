@@ -69,6 +69,9 @@ pub enum Error {
     FragmentFromOtherMeter,
     /// Decryption or authentication failed: the check that failed, never the key.
     Verification(Check),
+    /// A wired primary address no slave answers from: 251 and 252 are reserved, 255 is
+    /// the broadcast without reply.
+    InvalidAddress(u8),
 }
 
 /// Which cryptographic check failed. Says nothing about the key (constitution IV).
@@ -141,6 +144,7 @@ impl fmt::Display for Error {
             }
             Self::FragmentFromOtherMeter => f.write_str("fragment from another meter"),
             Self::Verification(c) => write!(f, "verification failed: {c}"),
+            Self::InvalidAddress(a) => write!(f, "no meter answers from primary address {a}"),
         }
     }
 }

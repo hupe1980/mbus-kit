@@ -51,7 +51,7 @@ if let Some((telegram, _)) = wireless::open(&raw, Format::A, &key, &mut buf)? {
 | Layer | Status |
 |---|---|
 | **Wired link layer** (EN 13757-2): ACK, short, control and long frames, checksum; resynchronising scan for noisy lines | ✅ parse and encode, incremental (asks for more bytes) |
-| **Wired master** (sans-I/O): complete readout with FCB and retries, secondary addressing with wildcards, bus search, set address, baud rate, clock, application reset | ✅ tested against a simulated bus of 250 meters |
+| **Wired master** (sans-I/O): complete readout with FCB and retries, secondary addressing with wildcards, bus search, set address, baud rate, clock, application reset; replies only from the addressed meter (optionally bound to its printed ID), and every readout says whether it is complete | ✅ tested against a simulated bus of 250 meters; fuzzed |
 | **Real converters** (`serial::Bus`, std, no dependency): the master over any `Read + Write` — a USB level converter or a TCP gateway; echo, noise and collisions handled, every wait bounded | ✅ simulated converter and a real socket |
 | **JSON** (`json`, `no_std`, no allocation): one object per telegram — meter, authenticity, every record with exact value, unit, storage, tariff | ✅ every corpus telegram checked by a strict parser; fuzzed |
 | **`mbus` tool** (feature `cli`, no dependency): `decode`, `read`, `search`, `listen`, text or `--json`, sets up serial ports itself | ✅ |

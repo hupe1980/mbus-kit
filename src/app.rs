@@ -721,7 +721,7 @@ impl Encrypted<'_> {
         let header = ctx.header.get(..usize::from(ctx.header_len)).unwrap_or(&[]);
         // Bytes after the encrypted part are authenticated as associated data, or the
         // telegram is refused: a tail outside the tag would let anyone append records to
-        // an "authenticated" message (D-026; EN 13757-7 itself is not public).
+        // an "authenticated" message (EN 13757-7 itself is not public).
         let tail = self.data.get(self.encrypted_len..).unwrap_or(&[]);
         let mut aad = [0u8; 1 + 16 + 256];
         let aad_len = 1 + header.len() + tail.len();

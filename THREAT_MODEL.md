@@ -23,6 +23,8 @@ transmit to, or a capture file.
 | Meter-supplied text breaks the JSON a consumer parses | One RFC 8259 escaper for every string (manufacturer codes included); strict-parser tests and a fuzz target |
 | A key leaks | `oms::Key` is zeroized on drop and prints as `Key(..)`; errors name the failed check only; the crate stores no key |
 | A corrupted reading is used | Wired checksum and every wireless block CRC are checked |
+| A partial wired readout is taken as the meter's whole data (telegram limit, a broken page, a late `E5`) | `Readout::outcome` is `Complete` only when the meter ended its data; `serial::Bus` returns `Error::Incomplete` for anything else, and `mbus read` exits 1 |
+| Another meter, a second master or an echo feeds a wired readout | During a read only one `RSP_UD` frame from the requested primary address counts; every telegram must carry the expected identity (`expect_meter`, the selection, the first page), else `Outcome::WrongMeter` |
 | A VIFE changes a value and the change is ignored (a reading off by ×1000) | `Record::quantity` applies multiplicative corrections exactly and returns `None` for every VIFE it does not model |
 | Meter-supplied text (LVAR strings, plain-text units) carries terminal escape sequences into a log or console | `Display` escapes everything but printable ASCII as `\xNN` |
 
@@ -36,6 +38,9 @@ transmit to, or a capture file.
   unencrypted tail of a partially encrypted payload has no protection at all
   (`Record::from_ciphertext` is false for it). Every telegram carries its `Authenticity`; only
   `Authenticated` (mode 7, CMAC verified) is evidence.
+- **Forgery on a wired bus.** Wired M-Bus has no authentication. The readout's address
+  and identity checks catch mistakes (a swapped meter, a reassigned address, a stale
+  selection); a malicious device on the line can send any address and identity.
 - **Replay.** An authenticated telegram stays authenticated when replayed. The crate is
   stateless: it returns the AFL message counter, and rejecting a counter that is not
   greater than the last accepted one is the caller's job.

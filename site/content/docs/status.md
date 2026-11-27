@@ -9,7 +9,7 @@ weight = 80
 | Area | Supported |
 |---|---|
 | Wired link layer | ACK, short, control and long frames; checksum; incremental parsing; resynchronising scan; encoding |
-| Wired master | Readout with FCB and retries, multi-telegram; secondary addressing with wildcards and fabrication number; bus search; set address, baud rate, clock, application reset; a blocking driver over any port or TCP gateway |
+| Wired master | Multi-telegram readout with FCB, retries and an outcome; replies only from the addressed meter, optionally bound to its printed ID; secondary addressing with wildcards and fabrication number; bus search; set address, baud rate, clock, application reset; a blocking driver over any port or TCP gateway |
 | JSON and the `mbus` tool | One JSON object per telegram (no_std); `mbus decode/read/search/listen` |
 | Receiver sticks | IMST iM871A and iU891A, Amber AMB8465: telegrams with RSSI, receive-mode commands |
 | Wireless link layer | Frame formats A and B with CRC-16/EN-13757 per block; frames with CRCs already removed; format A encoding |
@@ -44,15 +44,13 @@ weight = 80
 - The **wired master** against a simulated bus with realistic collisions (overlapping
   `E5`s, garbled replies): every meter of buses of up to 250 meters with clustered IDs is
   found; command frames match the m-bus.com, libmbus and pyMeterBus reference frames
-  byte for byte.
+  byte for byte. No frame from another address, direction or meter, and no cut-off
+  readout, is reported as complete (tested and fuzzed).
 - **Receiver sticks**: real captures from an iM871A (wmbusmeters issues #750, #1055,
   #1517), an AMB8465 (#1049) and an iU891A, and the vendors' command examples; corrupted
   and truncated stick frames cost only themselves. The **serial driver** against a
   simulated converter (echo, noise, 1-byte chunks, silence, random and endless replies)
   and a real TCP socket.
-- An **independent review** of every module against OMS Vol. 2 5.0.1 and Annex N found
-  six defects (mode-10 tail, stripped MAC, mode 13 as plaintext, a false ACK in chunked
-  wired replies, type-F years, format-B lengths); each is fixed with a regression test.
 - **JSON**: every corpus telegram parses with a strict RFC 8259 parser, its numbers equal
   the exact quantities; fuzzed.
 - The **EN 13757-3 reference telegram** decodes to the documented values and re-encodes

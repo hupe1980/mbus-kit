@@ -73,14 +73,14 @@ fn a_stick_stream_on_stdin() {
     assert!(err.contains("HYD 14600785 pressure v64"), "{err}");
 }
 
-#[test]
-fn read_a_meter_through_a_tcp_gateway() {
-    // SC-003 (006): one command from address to records, here against a simulated gateway.
+/// A simulated TCP gateway in front of meter 12345678 at primary 1, sending `telegrams`.
+fn gateway(telegrams: u8) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    let gateway = std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut bus = sim::Bus::new(&[12_345_678]);
+        bus.meters[0].telegrams = telegrams;
         let mut buf = [0u8; 64];
         let mut pending = Vec::new();
         while let Ok(n) = stream.read(&mut buf) {
@@ -95,11 +95,39 @@ fn read_a_meter_through_a_tcp_gateway() {
             }
         }
     });
+    (addr, handle)
+}
+
+#[test]
+fn read_a_meter_through_a_tcp_gateway() {
+    // SC-003 (006): one command from address to records, here against a simulated gateway.
+    let (addr, gateway) = gateway(1);
     let o = mbus(&["read", &format!("tcp:{addr}"), "1", "--json"], b"");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let json = stdout(&o);
     assert!(json.contains(r#""meter":{"manufacturer":"KAM","id":"12345678""#), "{json}");
     gateway.join().unwrap();
+}
+
+// 007-readout-integrity/SR-002: an incomplete readout is printed, but never a success.
+#[test]
+fn an_incomplete_readout_fails_after_printing_what_was_read() {
+    // 20 telegrams, the default limit is 16.
+    let (addr, gateway) = gateway(20);
+    let o = mbus(&["read", &format!("tcp:{addr}"), "1", "--json"], b"");
+    assert_eq!(o.status.code(), Some(1));
+    let json = stdout(&o);
+    assert_eq!(json.lines().filter(|l| l.starts_with(r#"{"meter""#)).count(), 16, "{json}");
+    let last = json.lines().last().unwrap();
+    assert!(
+        last.starts_with(r#"{"error":"incomplete readout after 16 telegram(s): telegram limit reached"#),
+        "{last}"
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("incomplete readout"));
+    gateway.join().unwrap();
+    let o = mbus(&["read", "tcp:127.0.0.1:1", "251"], b"");
+    assert_eq!(o.status.code(), Some(2), "251 is refused before connecting");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not a primary address (0–250)"));
 }
 
 #[test]

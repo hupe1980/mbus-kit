@@ -19,9 +19,9 @@ Both carry the same application layer (EN 13757-3), which is where the readings 
 
 ```toml
 [dependencies]
-mbus-kit = "0.1"
+mbus-kit = "0.2"
 # For a microcontroller:
-# mbus-kit = { version = "0.1", default-features = false }
+# mbus-kit = { version = "0.2", default-features = false }
 ```
 
 ## Read a wired meter
@@ -49,7 +49,9 @@ mbus read /dev/ttyUSB0 5        # brew install hupe1980/tap/mbus
 ```
 
 The driver handles timeouts, the frame count bit, retries, echoing converters and line
-noise. On a microcontroller or an async runtime, drive the same state machines yourself
+noise, and is `Ok` only when it read every telegram of the addressed meter
+(`serial::Error::Incomplete` says why not). On a microcontroller or an async runtime,
+drive the same state machines yourself
 ([Wired master](@/docs/wired-master.md)); a captured frame decodes with
 `wired::Frame::parse` and `Application::parse`.
 
@@ -58,7 +60,7 @@ noise. On a microcontroller or an async runtime, drive the same state machines y
 Most radio meters encrypt. Enable OMS security and hand the library the meter's key:
 
 ```toml
-mbus-kit = { version = "0.1", features = ["oms"] }
+mbus-kit = { version = "0.2", features = ["oms"] }
 ```
 
 ```rust

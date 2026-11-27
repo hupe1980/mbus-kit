@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
-use mbus_kit::master::{Baud, Event, Readout, Search, SecondaryAddress, Target};
+use mbus_kit::master::{Baud, Event, Outcome, Readout, Search, SecondaryAddress, Target};
 use mbus_kit::serial::{Bus, Error};
 
 /// A level converter in front of the simulated bus.
@@ -19,6 +19,10 @@ struct Converter {
     chunk: usize,
     rx: VecDeque<u8>,
     fail: bool,
+    /// Bytes before the echo (line switching noise).
+    pre_echo: Vec<u8>,
+    /// Replaces the meter's reply to a `REQ_UD2`.
+    rewrite: Option<fn(Vec<u8>) -> Vec<u8>>,
 }
 
 impl Converter {
@@ -30,6 +34,8 @@ impl Converter {
             chunk: 64,
             rx: VecDeque::new(),
             fail: false,
+            pre_echo: Vec::new(),
+            rewrite: None,
         }
     }
 }
@@ -40,9 +46,15 @@ impl Write for Converter {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "unplugged"));
         }
         if self.echo {
+            self.rx.extend(&self.pre_echo);
             self.rx.extend(buf);
         }
-        let reply = self.bus.send(buf);
+        let mut reply = self.bus.send(buf);
+        if let (Some(rewrite), [0x10, c, ..]) = (self.rewrite, buf) {
+            if c & 0x4F == 0x4B {
+                reply = rewrite(reply);
+            }
+        }
         if !reply.is_empty() {
             self.rx.extend(&self.noise);
         }
@@ -120,7 +132,10 @@ fn telegrams_decode_and_secondary_readout_selects() {
 fn a_silent_meter_is_no_reply_after_the_retries_and_bounded_in_time() {
     let started = Instant::now();
     let mut bus = fast(Converter::new(&[]));
-    assert!(matches!(bus.readout(Target::Primary(7)), Err(Error::NoReply)));
+    assert!(matches!(
+        bus.readout(Target::Primary(7)),
+        Err(Error::Incomplete { outcome: Outcome::NoReply, .. })
+    ));
     // SND_NKE three times at 38400 Bd: 3 × (9 ms + 50 ms), plus scheduling.
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     assert_eq!(bus.into_inner().bus.log.len(), 3);
@@ -267,7 +282,10 @@ fn a_port_that_never_falls_silent_cannot_hold_the_driver() {
     // 005-io-shells/SR-001: time and memory are bounded per reply.
     let started = Instant::now();
     let mut bus = Bus::new(Babbler(0), Baud::B9600).slack(Duration::ZERO);
-    assert!(matches!(bus.readout(Target::Primary(1)), Err(Error::NoReply)));
+    assert!(matches!(
+        bus.readout(Target::Primary(1)),
+        Err(Error::Incomplete { outcome: Outcome::NoReply, .. })
+    ));
     // Every probe looks like a collision: the search gives up at its limit and says so.
     let found = bus.run_search(Search::new().max_selections(200)).unwrap();
     assert!(!found.complete);
@@ -320,4 +338,123 @@ fn an_e5_inside_a_frame_still_arriving_is_data_not_an_ack() {
     let telegrams = bus.readout(Target::Primary(5)).unwrap();
     assert_eq!(telegrams.len(), 1);
     assert_eq!(telegrams[0].application().unwrap().records().unwrap().count(), 1);
+}
+
+// ---- spec 007: readout integrity through the driver
+
+// 007-readout-integrity/SR-002
+#[test]
+fn a_limited_readout_is_an_error_that_keeps_its_telegrams() {
+    let mut c = Converter::new(&[12_345_678]);
+    c.bus.meters[0].telegrams = 2;
+    match fast(c).run_readout(Readout::new(Target::Primary(1)).max_telegrams(1)) {
+        Err(e @ Error::Incomplete { outcome: Outcome::LimitReached, .. }) => {
+            assert_eq!(
+                e.to_string(),
+                "incomplete readout after 1 telegram(s): telegram limit reached, the meter has more records"
+            );
+            let Error::Incomplete { telegrams, .. } = e else { unreachable!() };
+            assert_eq!(telegrams.len(), 1);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+// 007-readout-integrity/SR-004
+#[test]
+fn an_undecodable_telegram_still_deselects() {
+    let mut c = Converter::new(&[12_345_678]);
+    c.rewrite = Some(|_| {
+        let mut out = [0u8; 16];
+        let n = mbus_kit::wired::Frame::Long { c: 0x08, a: 0xFD, ci: 0x72, data: &[0x78, 0x56] }
+            .encode(&mut out)
+            .unwrap();
+        out[..n].to_vec()
+    });
+    let mut bus = fast(c);
+    let r = bus.readout(Target::Secondary(SecondaryAddress::id(12_345_678).unwrap()));
+    assert!(matches!(r, Err(Error::Incomplete { outcome: Outcome::Invalid(_), .. })), "{r:?}");
+    let log = bus.into_inner().bus.log;
+    assert_eq!(log.last().unwrap(), &[0x10, 0x40, 0xFD, 0x3D, 0x16], "ends with the deselection");
+}
+
+// noise before the echo, a stray start byte before the reply.
+#[test]
+fn noise_before_the_echo_or_a_stray_start_byte_does_not_lose_the_reply() {
+    let want = direct(&[12_345_678], 2, Target::Primary(1));
+    for (pre_echo, noise) in [(vec![0x00], vec![]), (vec![0x00, 0xFF], vec![0x68]), (vec![], vec![0x10])] {
+        let mut c = Converter::new(&[12_345_678]);
+        c.bus.meters[0].telegrams = 2;
+        (c.echo, c.pre_echo, c.noise) = (true, pre_echo.clone(), noise.clone());
+        let got = fast(c).readout(Target::Primary(1)).unwrap();
+        let got: Vec<Vec<u8>> = got.iter().map(|t| t.bytes().to_vec()).collect();
+        assert_eq!(got, want, "pre-echo {pre_echo:02X?}, noise {noise:02X?}");
+    }
+}
+
+/// A converter on a real line: the request takes its transmission time, and each reply
+/// arrives `delays[n]` after the end of request `n` (`flush` returns at once).
+struct Line {
+    bus: sim::Bus,
+    baud: u32,
+    delays: Vec<Duration>,
+    pending: Vec<(Instant, Vec<u8>)>,
+}
+
+impl Write for Line {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.bus.log.len();
+        let reply = self.bus.send(buf);
+        let on_line = Duration::from_millis(buf.len() as u64 * 11 * 1000 / u64::from(self.baud));
+        let delay = self.delays.get(n).copied().unwrap_or(Duration::from_millis(20));
+        if !reply.is_empty() {
+            self.pending.push((Instant::now() + on_line + delay, reply));
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Read for Line {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        std::thread::sleep(Duration::from_millis(1));
+        let now = Instant::now();
+        let Some(i) = self.pending.iter().position(|(t, _)| *t <= now) else {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "nothing"));
+        };
+        let (_, bytes) = self.pending.remove(i);
+        buf[..bytes.len()].copy_from_slice(&bytes);
+        Ok(bytes.len())
+    }
+}
+
+// the response timeout runs from the end of the request, not from `flush`.
+#[test]
+fn a_slow_meter_within_its_timeout_is_read_at_300_baud() {
+    // 300 Bd: a 5-byte request takes 183 ms; the meter may answer up to 1150 ms later.
+    let line = Line {
+        bus: sim::Bus::new(&[12_345_678]),
+        baud: 300,
+        delays: vec![Duration::from_millis(1000); 2],
+        pending: Vec::new(),
+    };
+    let mut bus = Bus::new(line, Baud::B300).slack(Duration::ZERO);
+    assert_eq!(bus.readout(Target::Primary(1)).unwrap().len(), 1);
+    assert_eq!(bus.into_inner().bus.log.len(), 2, "no request repeated");
+}
+
+// A late acknowledgement is not the answer to REQ_UD2.
+#[test]
+fn a_late_acknowledgement_never_completes_a_readout() {
+    let line = Line {
+        bus: sim::Bus::new(&[12_345_678]),
+        baud: 2400,
+        delays: vec![Duration::from_millis(260)], // past the 210 ms window of the first SND_NKE
+        pending: Vec::new(),
+    };
+    let mut bus = Bus::new(line, Baud::B2400).slack(Duration::ZERO);
+    let telegrams = bus.readout(Target::Primary(1)).unwrap();
+    assert_eq!(telegrams.len(), 1);
 }

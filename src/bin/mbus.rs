@@ -19,7 +19,7 @@ use mbus_kit::fragment::Reassembly;
 use mbus_kit::json::{Json, JsonAddress, JsonString};
 use mbus_kit::master::{Baud, SecondaryAddress, Target};
 use mbus_kit::oms::Key;
-use mbus_kit::serial::Bus;
+use mbus_kit::serial::{Bus, Error};
 use mbus_kit::stick::{LinkMode, Message, Receiver, Stick};
 use mbus_kit::wired::Frame;
 use mbus_kit::wireless::{self, Format};
@@ -462,17 +462,28 @@ fn read(o: &Options) -> Result<(), Failure> {
         let id: u32 = what.parse().map_err(|_| Failure::Usage(format!("{what} is not an 8-digit ID")))?;
         Target::Secondary(SecondaryAddress::id(id).ok_or("not an 8-digit ID")?)
     } else {
-        let a: u8 = what.parse().map_err(|_| Failure::Usage(format!("{what} is not a primary address")))?;
-        Target::Primary(a)
+        let a = what.parse().ok().filter(|a: &u8| *a <= 250);
+        Target::Primary(a.ok_or_else(|| Failure::Usage(format!("{what} is not a primary address (0–250)")))?)
     };
     let mut bus = open_bus(o)?;
     let mut ctx = Ctx::new(o);
     let mut buf = vec![0u8; 16_384];
     let mut fragments = Reassembly::new(&mut buf);
-    for telegram in bus.readout(target)? {
+    let (telegrams, incomplete) = match bus.readout(target) {
+        Ok(telegrams) => (telegrams, None),
+        Err(Error::Incomplete { outcome, telegrams }) => (telegrams, Some(outcome)),
+        Err(e) => return Err(e.into()),
+    };
+    for telegram in &telegrams {
         handle(&telegram.application()?, &mut ctx, Some(&mut fragments));
     }
-    Ok(())
+    // What was read is printed, but an incomplete readout is never a success.
+    let Some(outcome) = incomplete else { return Ok(()) };
+    let msg = format!("incomplete readout after {} telegram(s): {outcome}", telegrams.len());
+    if o.json {
+        println!("{{\"error\":{}}}", JsonString(&msg));
+    }
+    Err(Failure::Run(msg))
 }
 
 fn search(o: &Options) -> Result<(), Failure> {
@@ -493,6 +504,13 @@ fn search(o: &Options) -> Result<(), Failure> {
             println!("{{\"ambiguous\":{}}}", JsonString(&id.to_string()));
         } else {
             println!("{id}: several meters share this ID (use their fabrication numbers)");
+        }
+    }
+    for id in &found.unreadable {
+        if o.json {
+            println!("{{\"unreadable\":{}}}", JsonString(&id.to_string()));
+        } else {
+            println!("{id}: a meter answers this selection but does not name itself");
         }
     }
     if !found.complete {

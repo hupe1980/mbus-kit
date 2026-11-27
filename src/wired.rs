@@ -29,6 +29,12 @@ pub mod control {
     pub const FCB: u8 = 0x20;
     /// `RSP_UD`: a slave's response (lower nibble 8; ACD and DFC bits may be set).
     pub const RSP_UD: u8 = 0x08;
+
+    /// Whether `c` is a slave's response with data: `RSP_UD`, PRM clear, ACD and DFC
+    /// either way (`08`, `18`, `28`, `38`).
+    pub const fn is_response(c: u8) -> bool {
+        c & 0xCF == RSP_UD
+    }
 }
 
 /// The primary address that addresses every slave (no reply expected).
@@ -175,6 +181,18 @@ pub fn scan(buf: &[u8]) -> Scan<'_> {
     Scan::NeedMore { skip: buf.len() }
 }
 
+/// [`scan`] for a reply that is over (no more bytes will come): an incomplete frame is
+/// noise too, so a frame behind a stray start byte (`68 E5`, `10 E5`) is still found.
+/// [`Scan::NeedMore`] means there is no valid frame.
+pub fn scan_ended(buf: &[u8]) -> Scan<'_> {
+    for start in 0..buf.len() {
+        if let Some(Ok(Some((frame, len)))) = buf.get(start..).map(Frame::parse) {
+            return Scan::Frame { frame, skip: start, len };
+        }
+    }
+    Scan::NeedMore { skip: buf.len() }
+}
+
 fn check(computed: u8, found: u8, stop: u8) -> Result<()> {
     if computed != found {
         return Err(Error::Checksum { computed, found });
@@ -235,8 +253,7 @@ mod tests {
         echo[..5].copy_from_slice(&all[3..]);
         echo[5] = ACK;
         assert_eq!(scan(&echo), Scan::Frame { frame: req_ud2(5, true), skip: 0, len: 5 });
-        // A long frame still arriving whose data holds an E5: wait, never an ACK (review
-        // 2026-11-27: the readout ended with no telegram).
+        // A long frame still arriving whose data holds an E5: wait, never an ACK.
         let mut long = [0u8; 64];
         let data =
             [0x78, 0x56, 0x34, 0x12, 0x24, 0x40, 0x01, 0x07, 0x55, 0, 0, 0, 0x03, 0x13, 0xE5, 0x31, 0x00];

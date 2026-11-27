@@ -15,7 +15,7 @@
   <div class="split">
     <div>
       <h2 id="read">Read a wired meter</h2>
-      <p>Send <code>REQ_UD2</code>, parse the response, iterate the records.</p>
+      <p>Every telegram of the meter you addressed, or an error that says why not.</p>
 {{ load_data(path="includes/snippet-read.md", format="plain") | markdown | safe }}
     </div>
     <div>
@@ -26,7 +26,7 @@
   </div>
   <div class="grid">
     <a class="card card-link" href="{{ get_url(path='@/docs/wire-format.md') }}"><h3>The wire format</h3><p>Wired and wireless frames, the CI field, fragments, compact frames, data records and the VIF table.</p></a>
-    <a class="card card-link" href="{{ get_url(path='@/docs/wired-master.md') }}"><h3>Wired master</h3><p>Complete readouts, secondary addressing and a bus search over a real converter or gateway, with the frame count bit done right.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/wired-master.md') }}"><h3>Wired master</h3><p>Complete readouts from the meter you addressed, secondary addressing and a bus search over a real converter or gateway.</p></a>
     <a class="card card-link" href="{{ get_url(path='@/docs/json.md') }}"><h3>JSON and the mbus tool</h3><p>Every telegram as one JSON line with exact values; decode, read, search and listen from the shell.</p></a>
     <a class="card card-link" href="{{ get_url(path='@/docs/receivers.md') }}"><h3>Radio receivers</h3><p>IMST iM871A and iU891A, Amber AMB8465: one decoder, telegrams with RSSI.</p></a>
     <a class="card card-link" href="{{ get_url(path='@/docs/security.md') }}"><h3>Security</h3><p>OMS modes 5, 7 and 10, the ELL, fragments, keys as secrets, and what a telegram can prove.</p></a>

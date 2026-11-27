@@ -1,4 +1,5 @@
-//! Drive a wired M-Bus: read a meter completely, then search the bus.
+//! Drive a wired M-Bus: read a meter completely (bound to its printed ID), then search
+//! the bus.
 //!
 //! `cargo run --example master`
 //!
@@ -7,7 +8,7 @@
 //! `transfer` writes the request, then reads until `wired::scan` finds a frame or the
 //! timeout passes.
 
-use mbus_kit::master::{Baud, Event, Readout, Search, Target};
+use mbus_kit::master::{Baud, Event, Outcome, Readout, Search, SecondaryAddress, Target};
 use mbus_kit::wired::Frame;
 
 /// What a serial port does for the master: send, then collect the reply.
@@ -19,7 +20,9 @@ fn main() {
     let mut bus = Scripted::default();
 
     // 1. Read meter 1 completely: SND_NKE, then REQ_UD2 until no more records follow.
-    let mut readout = Readout::new(Target::Primary(1));
+    //    Only telegrams from meter 12345678 count (a swapped meter is caught).
+    let meter = SecondaryAddress::pattern("12345678").unwrap();
+    let mut readout = Readout::new(Target::Primary(1)).expect_meter(meter);
     while let Some(request) = readout.next_request() {
         let reply = bus.transfer(request.bytes(), request.timeout_ms(Baud::B2400));
         let event = if reply.is_empty() { readout.timeout(&reply) } else { readout.reply(&reply) };
@@ -30,15 +33,21 @@ fn main() {
             }
         }
     }
-    println!("{} telegrams\n", readout.telegrams());
+    match readout.outcome() {
+        Some(Outcome::Complete) => println!("complete: {} telegrams\n", readout.telegrams()),
+        Some(other) => println!("not usable: {other}\n"),
+        None => unreachable!("the readout is over"),
+    }
 
     // 2. Find every meter on the bus by secondary address.
     let mut search = Search::new();
     while let Some(request) = search.next_request() {
         let reply = bus.transfer(request.bytes(), request.timeout_ms(Baud::B2400));
         let event = if reply.is_empty() { search.timeout(&reply) } else { search.reply(&reply) };
-        if let Event::Found(meter) = event {
-            println!("found {meter}");
+        match event {
+            Event::Found(meter) => println!("found {meter}"),
+            Event::Unreadable(pattern) => println!("{pattern} answers but does not name itself"),
+            _ => {}
         }
     }
     println!("{} selections", search.selections());

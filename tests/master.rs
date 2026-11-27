@@ -257,3 +257,268 @@ fn a_line_where_everything_collides_is_given_up_not_searched_forever() {
     }
     assert!(empty.is_complete());
 }
+
+// ---- spec 007: readout integrity
+
+use mbus_kit::master::Outcome;
+use mbus_kit::wired::Frame;
+
+/// A long-header RSP_UD with control `c` from primary `a`, meter `id` (KAM, heat), one
+/// volume record `v`, and `1F` when more follows; `tail` are extra record bytes.
+fn page(c: u8, a: u8, id: u32, v: u8, more: bool, tail: &[u8]) -> Vec<u8> {
+    let m = addr(id);
+    let [i0, i1, i2, i3] = m.id;
+    let [m0, m1] = m.manufacturer.0.to_le_bytes();
+    let mut data = vec![i0, i1, i2, i3, m0, m1, m.version, m.medium.0, v, 0, 0, 0, 0x04, 0x13, v, 0, 0, 0];
+    data.extend_from_slice(tail);
+    if more {
+        data.push(0x1F);
+    }
+    let mut out = [0u8; 300];
+    let n = Frame::Long { c, a, ci: 0x72, data: &data }.encode(&mut out).unwrap();
+    out[..n].to_vec()
+}
+
+/// Drive `readout` with `replies` (empty = timeout; exhausted = timeouts). Returns the
+/// events and the requests' C fields.
+fn drive(readout: &mut Readout, replies: &[Vec<u8>]) -> (Vec<String>, Vec<u8>) {
+    let mut events = Vec::new();
+    let mut sent = Vec::new();
+    let mut it = replies.iter();
+    while let Some(req) = readout.next_request() {
+        assert!(sent.len() < 100, "readout does not end");
+        sent.push(req.bytes()[if req.bytes()[0] == 0x68 { 4 } else { 1 }]);
+        let reply = it.next().map_or(&[][..], Vec::as_slice);
+        let event = if reply.is_empty() { readout.timeout(reply) } else { readout.reply(reply) };
+        events.push(match event {
+            Event::Telegram(app) => format!("T{}", app.meter().unwrap().id_number().unwrap()),
+            other => format!("{other:?}").split('(').next().unwrap().to_string(),
+        });
+    }
+    (events, sent)
+}
+
+const ACK: &[u8] = &[0xE5];
+
+// 007-readout-integrity/SR-002
+#[test]
+fn readout_limit_reached_is_not_complete() {
+    // The issue's case: a two-telegram meter, max_telegrams(1).
+    let mut r = Readout::new(Target::Primary(5)).max_telegrams(1);
+    let (events, sent) = drive(&mut r, &[ACK.to_vec(), page(0x08, 5, 1, 0, true, &[])]);
+    assert_eq!(events, ["Acknowledged", "T1"]);
+    assert_eq!(sent, [0x40, 0x7B], "no second REQ_UD2");
+    assert_eq!(r.outcome(), Some(Outcome::LimitReached));
+    assert!(!r.is_complete());
+    assert_eq!(r.telegrams(), 1);
+    // max_telegrams(0) reads one telegram, like 1.
+    let mut r = Readout::new(Target::Primary(5)).max_telegrams(0);
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 5, 1, 0, true, &[])]);
+    assert_eq!(r.outcome(), Some(Outcome::LimitReached));
+    // Without the limit both pages are read and the readout is complete.
+    let mut r = Readout::new(Target::Primary(5));
+    let (events, _) =
+        drive(&mut r, &[ACK.to_vec(), page(0x08, 5, 1, 0, true, &[]), page(0x08, 5, 1, 1, false, &[])]);
+    assert_eq!(events, ["Acknowledged", "T1", "T1"]);
+    assert_eq!(r.outcome(), Some(Outcome::Complete));
+}
+
+// 007-readout-integrity/SR-002, 007-readout-integrity/SR-004
+#[test]
+fn a_secondary_readout_that_ends_early_still_deselects() {
+    let s = Target::Secondary(SecondaryAddress::id(1).unwrap());
+    let cases: [(Vec<Vec<u8>>, Outcome); 3] = [
+        (vec![ACK.to_vec(), ACK.to_vec(), page(0x08, 0, 1, 0, true, &[])], Outcome::LimitReached),
+        (
+            vec![ACK.to_vec(), ACK.to_vec(), page(0x08, 0, 2, 0, false, &[])],
+            Outcome::WrongMeter(Some(addr(2))),
+        ),
+        (vec![ACK.to_vec(), ACK.to_vec()], Outcome::NoReply),
+    ];
+    for (replies, outcome) in cases {
+        let mut r = Readout::new(s).max_telegrams(1);
+        let (_, sent) = drive(&mut r, &replies);
+        assert_eq!(sent.last(), Some(&0x40), "{outcome:?}: ends with SND_NKE to FD");
+        assert_eq!(r.outcome(), Some(outcome));
+    }
+    // An undecodable telegram (CI 72 cut short) too, and the outcome says why.
+    let mut short = [0u8; 32];
+    let n = Frame::Long { c: 0x08, a: 0, ci: 0x72, data: &[0x78, 0x56] }.encode(&mut short).unwrap();
+    let mut r = Readout::new(s);
+    let (events, sent) = drive(&mut r, &[ACK.to_vec(), ACK.to_vec(), short[..n].to_vec()]);
+    assert_eq!(events[2], "Invalid");
+    assert_eq!(sent.last(), Some(&0x40));
+    assert!(matches!(r.outcome(), Some(Outcome::Invalid(_))));
+}
+
+#[test]
+fn outcome_is_none_while_running_and_e5_rules() {
+    let mut r = Readout::new(Target::Primary(5));
+    assert_eq!(r.outcome(), None);
+    r.next_request();
+    r.reply(ACK);
+    assert_eq!(r.outcome(), None);
+    // E5 after a page that said "more follows": nothing more, complete.
+    let mut r = Readout::new(Target::Primary(5));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), page(0x08, 5, 1, 0, true, &[]), ACK.to_vec()]);
+    assert_eq!(events, ["Acknowledged", "T1", "Acknowledged"]);
+    assert!(r.is_complete());
+    // An E5 before the first page is a late or doubled acknowledgement, never "complete".
+    let mut r = Readout::new(Target::Primary(5));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), ACK.to_vec(), page(0x08, 5, 1, 0, false, &[])]);
+    assert_eq!(events, ["Acknowledged", "Retrying", "T1"]);
+    assert!(r.is_complete());
+    let mut r = Readout::new(Target::Primary(5));
+    drive(&mut r, &[ACK.to_vec(), ACK.to_vec(), ACK.to_vec(), ACK.to_vec()]);
+    assert_eq!(r.outcome(), Some(Outcome::NoReply));
+    // after the end, a timeout is no retry.
+    assert!(matches!(r.timeout(&[]), Event::NoReply));
+}
+
+// 007-readout-integrity/SR-001
+#[test]
+fn only_the_addressed_slave_can_answer() {
+    let rejected = [
+        page(0x08, 6, 1, 0, false, &[]), // another primary address
+        page(0x53, 5, 1, 0, false, &[]), // a master's SND_UD
+        page(0x48, 5, 1, 0, false, &[]), // PRM set
+        page(0x0A, 5, 1, 0, false, &[]), // another function
+        [page(0x08, 5, 1, 0, false, &[]), vec![0x00]].concat(), // a byte after the frame
+    ];
+    for bad in rejected {
+        let mut r = Readout::new(Target::Primary(5));
+        let (events, _) = drive(&mut r, &[ACK.to_vec(), bad.clone(), bad.clone(), bad]);
+        assert_eq!(events, ["Acknowledged", "Retrying", "Retrying", "NoReply"]);
+        assert_eq!(r.outcome(), Some(Outcome::NoReply));
+    }
+    // After a foreign frame the real reply still counts (same FCB repeated).
+    let mut r = Readout::new(Target::Primary(5));
+    let (events, sent) =
+        drive(&mut r, &[ACK.to_vec(), page(0x08, 6, 9, 0, false, &[]), page(0x38, 5, 1, 0, false, &[])]);
+    assert_eq!(events, ["Acknowledged", "Retrying", "T1"], "ACD and DFC set: still a response");
+    assert_eq!(sent, [0x40, 0x7B, 0x7B]);
+    assert!(r.is_complete());
+    // 254: the slave answers with its own address.
+    let mut r = Readout::new(Target::Primary(254));
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 1, 0, false, &[])]);
+    assert!(r.is_complete());
+    // A trailing byte after the E5 of the reset is garbled too.
+    let mut r = Readout::new(Target::Primary(5));
+    r.next_request();
+    assert!(matches!(r.reply(&[0xE5, 0xE5]), Event::Retrying));
+}
+
+// 007-readout-integrity/SR-003
+#[test]
+fn one_readout_one_meter() {
+    let kam = |id| SecondaryAddress::exact(&addr(id));
+    // Bound to the printed identity: another meter at the same address is refused.
+    let mut r = Readout::new(Target::Primary(17)).expect_meter(kam(6_855_817));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 6_855_818, 0, false, &[])]);
+    assert_eq!(events, ["Acknowledged", "WrongMeter"]);
+    assert_eq!(r.outcome(), Some(Outcome::WrongMeter(Some(addr(6_855_818)))));
+    assert_eq!(r.telegrams(), 0);
+    // Wildcards in the binding.
+    let mut r =
+        Readout::new(Target::Primary(17)).expect_meter(SecondaryAddress::pattern("0685FFFF").unwrap());
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 6_855_818, 0, false, &[])]);
+    assert!(r.is_complete());
+    // A secondary readout is bound to its selection.
+    let mut r = Readout::new(Target::Secondary(SecondaryAddress::pattern("1234FFFF").unwrap()));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), ACK.to_vec(), page(0x08, 0, 55_555_555, 0, false, &[])]);
+    assert_eq!(events[2], "WrongMeter");
+    // Unbound: page 2 must come from page 1's meter.
+    let mut r = Readout::new(Target::Primary(17));
+    let (events, _) =
+        drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 1, 0, true, &[]), page(0x08, 17, 2, 1, false, &[])]);
+    assert_eq!(events, ["Acknowledged", "T1", "WrongMeter"]);
+    assert_eq!(r.outcome(), Some(Outcome::WrongMeter(Some(addr(2)))));
+    // A telegram without identity (short header, CI 7A) under a binding.
+    let mut short = [0u8; 32];
+    let n = Frame::Long { c: 0x08, a: 17, ci: 0x7A, data: &[1, 0, 0, 0, 0x04, 0x13, 1, 0, 0, 0] }
+        .encode(&mut short)
+        .unwrap();
+    let mut r = Readout::new(Target::Primary(17)).expect_meter(kam(1));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), short[..n].to_vec()]);
+    assert_eq!(events, ["Acknowledged", "WrongMeter"]);
+    assert_eq!(r.outcome(), Some(Outcome::WrongMeter(None)));
+}
+
+// 007-readout-integrity/SR-003 (SC-003): what the ems driver checks by hand.
+#[test]
+fn the_ems_heat_meter_readout_is_configuration() {
+    let ems = || {
+        Readout::new(Target::Primary(17))
+            .expect_meter(SecondaryAddress::exact(&addr(6_855_817)))
+            .max_telegrams(1)
+    };
+    let mut r = ems();
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 6_855_817, 0, false, &[])]);
+    assert!(r.is_complete());
+    let mut r = ems();
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 6_855_817, 0, true, &[])]);
+    assert_eq!(r.outcome(), Some(Outcome::LimitReached), "a paginating meter is not a total");
+    let mut r = ems();
+    drive(&mut r, &[ACK.to_vec(), page(0x08, 17, 6_855_818, 0, false, &[])]);
+    assert!(matches!(r.outcome(), Some(Outcome::WrongMeter(_))));
+}
+
+// A broken record before `1F` hides "more follows": not complete.
+#[test]
+fn a_broken_record_is_not_a_complete_readout() {
+    let mut r = Readout::new(Target::Primary(5));
+    let (events, _) = drive(&mut r, &[ACK.to_vec(), page(0x08, 5, 1, 0, true, &[0x6F])]);
+    assert_eq!(events, ["Acknowledged", "T1"], "delivered: its records show the error");
+    assert_eq!(r.outcome(), Some(Outcome::Invalid(mbus_kit::Error::ReservedDif(0x6F))));
+}
+
+// 251, 252 and 255 never answer; nothing is sent.
+#[test]
+fn reserved_primary_addresses_are_refused_up_front() {
+    for a in [251, 252, 255] {
+        let mut r = Readout::new(Target::Primary(a));
+        assert!(r.next_request().is_none());
+        assert_eq!(r.outcome(), Some(Outcome::Invalid(mbus_kit::Error::InvalidAddress(a))));
+    }
+}
+
+// a meter that acknowledges a selection but does not name itself is reported.
+#[test]
+fn search_reports_meters_it_cannot_read() {
+    let run = |read: &dyn Fn(&[u8]) -> Vec<u8>| {
+        let mut search = Search::new();
+        let mut events = Vec::new();
+        while let Some(req) = search.next_request() {
+            let b = req.bytes();
+            let reply = if b[0] == 0x68 {
+                // One meter, 12345678: it acknowledges the selections that match it.
+                let pattern: [u8; 8] = b[7..15].try_into().unwrap();
+                if sim::matches(&pattern, &addr(12_345_678)) { vec![0xE5] } else { vec![] }
+            } else {
+                read(b)
+            };
+            match if reply.is_empty() { search.timeout(&[]) } else { search.reply(&reply) } {
+                Event::Found(a) => events.push(format!("found {}", a.id_number().unwrap())),
+                Event::Unreadable(p) => events.push(format!("unreadable {p}")),
+                _ => {}
+            }
+        }
+        assert!(search.is_complete());
+        events
+    };
+    let ok = |_: &[u8]| page(0x08, 0, 12_345_678, 0, false, &[]);
+    assert_eq!(run(&ok), ["found 12345678"]);
+    // Short header: no identity.
+    let short = |_: &[u8]| hex("680808680800780313153100DC16");
+    let no_id = run(&short);
+    // Another ID than the probe (S3), an E5 to the read (S6), silence (S2).
+    let other = |_: &[u8]| page(0x08, 0, 99_999_999, 0, false, &[]);
+    let ack = |_: &[u8]| vec![0xE5];
+    let silent = |_: &[u8]| vec![];
+    for (name, events) in
+        [("short", no_id), ("other", run(&other)), ("e5", run(&ack)), ("silent", run(&silent))]
+    {
+        assert!(events.iter().all(|e| e.starts_with("unreadable")), "{name}: {events:?}");
+        assert!(!events.is_empty(), "{name}: dropped silently");
+    }
+}
