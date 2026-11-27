@@ -1,0 +1,18 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.13: electricity meter, SND-NR
+# with an inverse compact profile (Annex R), type M base time, mode 7 with AFL CMAC.
+# https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+key 000102030405060708090A0B0C0D0E0F
+D344A73D785634120102ABFD8C200A900F002C25B30A0000B27C7EBE85D0A010C9537A0A00B007100D5EE06C03088EAB5EFC73ACC3D839C7E87EB41FBF9559E63B7C6FAB2B352BF3F0A0936C5896781B376D78A5181DD0CD6ACD20BA2003D823BE0A2ABB7F019F1642E9E4EAF1FC7E4E526F07931305C460A8E3DECCAF99A063749A109E782BB116A47828148285EF59107F5493D8D280731ABE8F5BABFE1C424953E7D6EB1010CC6E0713326ABAA6E14EB296B108D294AD08FA939A7164E2081325E1AF8F7E78BAB4B8B80F501C33CB06039F9941B1338367789109753989FD1C5D5A87A27EA525BC99F13B3E3A1957
+= wireless C 44 OMG 12345678 electricity v1
+= authenticated
+= energy — 1.9960 kWh
+= energy · backward — 305.1 Wh
+= date and time · storage 3 — 3 s before reception
+= energy · storage 3 — 1.995 kWh
+= energy · compact profile · storage 3 — 46 increments, every 8 s, backwards
+= energy · backward · storage 3 — 305 Wh
+= energy · backward · compact profile · storage 3 — 46 increments, every 8 s, backwards
+= actuality duration · storage 3 — 3 s
+= error flags · standard conformant — 0

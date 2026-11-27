@@ -1,0 +1,27 @@
+# libmbus test/test-frames/EDC.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: EDC.norm.xml
+! reals: temperatures, flows and powers are IEEE 754 singles: exact decimals (D-012), shown to 9 significant digits; libmbus rounds to 6 decimals. Plain-text units "C" and "c" are the meter's own.
+68AEAE682801729508121183140204170000008400863B230000008400863CD10100008440863B000000008440863C0000000085005B2B4BAC4185005F20D7AC4185405B0000B84285405F0000B84285003B8400353F85403B0000000095003B95CFB24395403B0000000085002B0000000085402B0000000095002BD39F904695402B00000000046D190F8A1784007C0143F30D000084407C01439D01000084007C01630100000084407C0163010000000F2F16
+= wired C 28 address 1
+= meter EDC 11120895 heat (outlet) v2
+= not authenticated
+= energy · forward — 35 kWh
+= energy · backward — 465 kWh
+= energy · forward · subunit 1 — 0 Wh
+= energy · backward · subunit 1 — 0 Wh
+= flow temperature — ≈ 21.5367031 °C
+= return temperature — ≈ 21.6050415 °C
+= flow temperature · subunit 1 — 92 °C
+= return temperature · subunit 1 — 92 °C
+= volume flow — ≈ 0.000707039118 m³/h
+= volume flow · subunit 1 — 0.000 m³/h
+= volume flow · maximum — ≈ 0.357621735 m³/h
+= volume flow · maximum · subunit 1 — 0.000 m³/h
+= power — 0 W
+= power · subunit 1 — 0 W
+= power · maximum — ≈ 18.5119121 kW
+= power · maximum · subunit 1 — 0 W
+= date and time — 2012-07-10 15:25
+= value — 3571 C
+= value · subunit 1 — 413 C
+= value — 1 c
+= value · subunit 1 — 1 c

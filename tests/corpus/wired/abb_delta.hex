@@ -1,0 +1,19 @@
+# libmbus test/test-frames/abb_delta.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: abb_delta.norm.xml
+689898680801721234567842040202450000000E84000000000000008E1084000000000000008E2084000000000000008EB00084000000000000008E801084000000000000008E804084000000000000008E904084000000000000008EA04084000000000000008EB04084000000000000008E8050840000000000000001FF9300000CFF92000000000107FD9700000000000000000001FF9800001F7516
+= wired C 08 address 1
+= meter ABB 78563412 electricity v2
+= not authenticated
+= energy — 0 Wh
+= energy · tariff 1 — 0 Wh
+= energy · tariff 2 — 0 Wh
+= energy · tariff 3 — 0 Wh
+= energy · tariff 4 — 0 Wh
+= energy · subunit 2 — 0 Wh
+= energy · tariff 1 · subunit 2 — 0 Wh
+= energy · tariff 2 · subunit 2 — 0 Wh
+= energy · tariff 3 · subunit 2 — 0 Wh
+= energy · tariff 4 · subunit 2 — 0 Wh
+= manufacturer specific — 0
+= manufacturer specific — 1000000
+= error flags — 0
+= manufacturer specific — 0

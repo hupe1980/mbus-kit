@@ -1,0 +1,15 @@
+# wmbusmeters tests/generated_tests.xmq#L447 @ cf4a01e; expected consumption_hca 0, target_date 2026-01-01, target_hca 2
+# licence: GPL-3.0; telegram bytes, key and expected values only
+# stripped (CRCs removed by the receiver)
+! compact-profile: the last record (VIFE 1F) is a compact profile of monthly values, decoded as a profile.
+format stripped
+key 750381240D0A7E371D4CB8D1869D8F9B
+5E44496A07190880FC087A714050058922C9598BDDDFBB5BBF44B9D54830830EB6BE3BA8117DFC88AE1B251837DFECB04E071554125366EF9D72DCE87C9A099AD0CD9BF70F4A2E9C4C58D780444219C3F546C887FBC2D93C272E314F925473
+= wireless C 44 ZRI 80081907 heat cost allocator v252
+= decrypted, not authenticated
+= heat cost allocation — 0
+= date · storage 1 — 2026-01-01
+= heat cost allocation · storage 1 — 2
+= date · storage 8 — 2026-02-01
+= heat cost allocation · storage 8 — 0
+= heat cost allocation · compact profile · storage 8 — 14 readings, every month, backwards

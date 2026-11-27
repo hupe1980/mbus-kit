@@ -16,10 +16,13 @@
 //! including its CRC) ends with a CRC over blocks 1 and 2; a longer frame has a third
 //! block with its own CRC. `L` counts the bytes after itself **with** the CRCs.
 //!
+//! **Stripped**: the receiver already removed the CRCs; `L` counts the bytes after it.
+//!
 //! CRCs are CRC-16/EN-13757, most significant byte first. The decoder copies the data
 //! without CRCs into a caller buffer, so the frame borrows from that buffer.
 
-use crate::app::{Manufacturer, Medium};
+pub use crate::app::Address;
+use crate::app::Application;
 use crate::crc::crc16;
 use crate::{Error, Result};
 
@@ -30,6 +33,10 @@ pub enum Format {
     A,
     /// Format B: CRCs after block 2 and block 3 only.
     B,
+    /// The receiver has already checked and removed the CRCs (what most wM-Bus sticks
+    /// deliver, and how captures are usually logged): `L` counts the bytes after itself.
+    /// Integrity then rests on the receiver.
+    Stripped,
 }
 
 /// C-field values a meter sends.
@@ -42,32 +49,6 @@ pub mod control {
     pub const ACC_NR: u8 = 0x47;
     /// `RSP_UD`: response to a request.
     pub const RSP_UD: u8 = 0x08;
-}
-
-/// The address of a wireless meter: manufacturer, ID, version and device type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Address {
-    /// Manufacturer (FLAG association code).
-    pub manufacturer: Manufacturer,
-    /// Identification number, 8 BCD digits, as transmitted (LSB first).
-    pub id: [u8; 4],
-    /// Version / generation.
-    pub version: u8,
-    /// Device type (medium).
-    pub medium: Medium,
-}
-
-impl Address {
-    /// The identification number as the decimal printed on the meter, if it is valid BCD.
-    pub fn id_number(&self) -> Option<u32> {
-        crate::value::bcd_u32(self.id)
-    }
-
-    fn bytes(self) -> [u8; 8] {
-        let [m0, m1] = self.manufacturer.0.to_le_bytes();
-        let [i0, i1, i2, i3] = self.id;
-        [m0, m1, i0, i1, i2, i3, self.version, self.medium.0]
-    }
 }
 
 /// A decoded wireless frame, CRCs removed.
@@ -83,6 +64,60 @@ pub struct Frame<'o> {
     pub payload: &'o [u8],
 }
 
+impl<'o> Frame<'o> {
+    /// The layers above the link layer (ELL, AFL, TPL) and the records, parsed with this
+    /// frame's address as the link address (it forms the mode-5 and ELL IVs).
+    pub fn application(&self) -> Result<Application<'o>> {
+        Application::parse_with_link(self.ci, self.payload, Some(self.address))
+    }
+}
+
+/// A received wireless telegram, opened: link layer and application, decrypted where
+/// a key was found.
+#[cfg(feature = "oms")]
+#[derive(Clone, Debug)]
+pub struct Telegram<'b> {
+    /// C field.
+    pub c: u8,
+    /// The transmitter (for a meter behind a radio adapter, see [`Application::meter`]).
+    pub address: Address,
+    /// The application, decrypted if the key lookup had the meter's key.
+    pub app: Application<'b>,
+}
+
+/// One call from radio bytes to records: check and strip the CRCs, parse every layer,
+/// and decrypt (and authenticate) with the meter's key from `keys`.
+///
+/// `buf` holds the frame without CRCs and the plaintext: it needs twice the frame's
+/// length (512 bytes always suffice). Returns `Ok(None)` when `raw` is shorter than
+/// its `L` field announces. Without the meter's key, the telegram is returned with its
+/// body still [`Body::Encrypted`](crate::Body::Encrypted) and
+/// [`Authenticity::None`](crate::app::Authenticity::None), not as an error: the
+/// unencrypted layers (address, ELL, header) are still useful.
+///
+/// An ELL-encrypted telegram whose TPL is encrypted as well needs a second decryption;
+/// the returned body is then `Encrypted` again.
+#[cfg(feature = "oms")]
+pub fn open<'b, K: crate::oms::Keys + ?Sized>(
+    raw: &[u8],
+    format: Format,
+    keys: &K,
+    buf: &'b mut [u8],
+) -> Result<Option<(Telegram<'b>, usize)>> {
+    let half = buf.len() / 2;
+    let (frame_buf, plain_buf) = buf.split_at_mut(half);
+    let Some((frame, used)) = decode(raw, format, frame_buf)? else { return Ok(None) };
+    let app = frame.application()?;
+    let app = match &app.body {
+        crate::Body::Encrypted(e) => match e.decrypt(keys, plain_buf) {
+            Err(Error::NoKey) => app,
+            other => other?,
+        },
+        _ => app,
+    };
+    Ok(Some((Telegram { c: frame.c, address: frame.address, app }, used)))
+}
+
 /// Number of bytes on the air for a frame whose `L` field is `l`, in `format`.
 pub fn wire_len(l: u8, format: Format) -> usize {
     let l = usize::from(l);
@@ -91,7 +126,7 @@ pub fn wire_len(l: u8, format: Format) -> usize {
             let rest = l.saturating_sub(9);
             1 + l + 2 + 2 * rest.div_ceil(16)
         }
-        Format::B => 1 + l,
+        Format::B | Format::Stripped => 1 + l,
     }
 }
 
@@ -109,6 +144,7 @@ pub fn decode<'o>(raw: &[u8], format: Format, out: &'o mut [u8]) -> Result<Optio
     let len = match format {
         Format::A => strip_a(raw, out)?,
         Format::B => strip_b(raw, out)?,
+        Format::Stripped => copy_into(out, 0, raw)?,
     };
     let data = out.get(..len).ok_or(Error::OutputTooSmall)?;
     let frame = parse_fields(data)?;
@@ -149,6 +185,10 @@ fn strip_a(raw: &[u8], out: &mut [u8]) -> Result<usize> {
 }
 
 fn strip_b(raw: &[u8], out: &mut [u8]) -> Result<usize> {
+    // A third block holds at least one byte and its CRC: L + 1 of 129 or 130 is no frame.
+    if matches!(raw.len(), 129 | 130) {
+        return Err(Error::InvalidLength);
+    }
     // Block 1 (10 bytes) and block 2 (up to 118 bytes with CRC) share the first CRC.
     let first_end = raw.len().min(128);
     let first = raw.get(..first_end.saturating_sub(2)).ok_or(Error::UnexpectedEnd)?;
@@ -168,17 +208,7 @@ fn parse_fields(data: &[u8]) -> Result<Frame<'_>> {
     else {
         return Err(Error::UnexpectedEnd);
     };
-    Ok(Frame {
-        c,
-        address: Address {
-            manufacturer: Manufacturer(u16::from_le_bytes([m0, m1])),
-            id: [i0, i1, i2, i3],
-            version,
-            medium: Medium(medium),
-        },
-        ci,
-        payload,
-    })
+    Ok(Frame { c, address: Address::from_link_bytes([m0, m1, i0, i1, i2, i3, version, medium]), ci, payload })
 }
 
 /// Encode a frame in format A: link fields, CI and payload, with a CRC after every
@@ -190,7 +220,7 @@ pub fn encode_a(c: u8, address: &Address, ci: u8, payload: &[u8], out: &mut [u8]
     let mut head = [0u8; 11];
     head[0] = l8;
     head[1] = c;
-    head[2..10].copy_from_slice(&(*address).bytes());
+    head[2..10].copy_from_slice(&address.to_bytes());
     head[10] = ci;
     let data = head.iter().copied().chain(payload.iter().copied());
 
@@ -221,6 +251,22 @@ pub fn encode_a(c: u8, address: &Address, ci: u8, payload: &[u8], out: &mut [u8]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{Manufacturer, Medium};
+
+    #[test]
+    fn format_b_lengths_without_room_for_a_third_block_are_invalid() {
+        // L + 1 = 129 or 130: past the first CRC, but no byte for a third block.
+        for l in [128u8, 129] {
+            let mut raw = [0u8; 130];
+            raw[0] = l;
+            let mut out = [0u8; 300];
+            assert_eq!(
+                decode(&raw[..=usize::from(l)], Format::B, &mut out).unwrap_err(),
+                Error::InvalidLength,
+                "L {l}"
+            );
+        }
+    }
 
     fn addr() -> Address {
         Address {
@@ -274,7 +320,7 @@ mod tests {
     #[test]
     fn format_b_single_block() {
         // Build format B by hand: L counts the CRC; one CRC over everything before it.
-        let a = addr().bytes();
+        let a = addr().to_bytes();
         let mut data = [0u8; 15];
         data[0] = 14; // 1 C + 8 address + 1 CI + 2 payload + 2 CRC
         data[1] = control::SND_NR;

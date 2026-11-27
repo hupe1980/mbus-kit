@@ -19,25 +19,16 @@ fn main() -> Result<(), mbus_kit::Error> {
     if let Header::Long(h) = app.header {
         println!(
             "{} meter {:08} by {}, version {}",
-            h.medium,
-            h.id_number().unwrap_or(0),
-            h.manufacturer,
-            h.version
+            h.address.medium,
+            h.address.id_number().unwrap_or(0),
+            h.address.manufacturer,
+            h.address.version
         );
     }
     if let Body::Records(records) = app.body {
         for record in records {
-            let r = record?;
-            let value = r.quantity().map_or_else(|| format!("{:?}", r.value), |q| q.to_string());
-            println!(
-                "  {:<22} {:<16} {:?}, storage {}, tariff {}, subunit {}",
-                r.name(),
-                value,
-                r.dib.function,
-                r.dib.storage,
-                r.dib.tariff,
-                r.dib.subunit
-            );
+            // e.g. "volume flow · maximum · storage 5 — 0.113 m³/h"
+            println!("  {}", record?);
         }
     }
     Ok(())

@@ -1,0 +1,12 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.6.3: https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+key 000102030405060708090A0B0C0D0E0F
+30449344443322115537A3528C0075728877665593445508000410051B2F00DFE2A782146D1513581CD2F83F3904D7570CFD1078563412FB35
+= wireless C 44 QDS 11223344 radio converter (meter side) v85
+= meter QDS 55667788 heat cost allocator v85
+= decrypted, not authenticated
+= heat cost allocation — 1234
+= date · storage 1 — 2007-04-30
+= heat cost allocation · storage 1 — 23456
+= customer location — 12345678

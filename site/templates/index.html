@@ -4,8 +4,8 @@
 <div class="wrap">
   <section class="hero">
     <h1>M-Bus for Rust</h1>
-    <p class="lede">Read heat, water and gas meters over the wired bus or by radio: EN 13757-2, -3 and -4.
-      Sans-I/O, <code>no_std</code>, no allocator, no dependencies, and exact readings, never floats.</p>
+    <p class="lede">Read heat, water and gas meters over the wired bus or by radio: EN 13757-2, -3, -4 and OMS,
+      encrypted or not. Sans-I/O, <code>no_std</code>, no allocator, every record described, and exact readings, never floats.</p>
     <div class="cta">
       <a class="btn btn-primary" href="{{ get_url(path='@/docs/getting-started.md') }}">Get started</a>
       <a class="btn" href="{{ config.extra.docs_rs }}">Rust API</a>
@@ -20,12 +20,16 @@
     </div>
     <div>
       <h2 id="radio">Receive one by radio</h2>
-      <p>Strip the block CRCs of a wireless frame, then read the same application layer.</p>
+      <p>Check the CRCs, decrypt with the meter's key, and know whether the reading is authenticated.</p>
 {{ load_data(path="includes/snippet-radio.md", format="plain") | markdown | safe }}
     </div>
   </div>
   <div class="grid">
-    <a class="card card-link" href="{{ get_url(path='@/docs/wire-format.md') }}"><h3>The wire format</h3><p>Wired and wireless frames, the CI field, data records and the VIF table.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/wire-format.md') }}"><h3>The wire format</h3><p>Wired and wireless frames, the CI field, fragments, compact frames, data records and the VIF table.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/wired-master.md') }}"><h3>Wired master</h3><p>Complete readouts, secondary addressing and a bus search over a real converter or gateway, with the frame count bit done right.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/json.md') }}"><h3>JSON and the mbus tool</h3><p>Every telegram as one JSON line with exact values; decode, read, search and listen from the shell.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/receivers.md') }}"><h3>Radio receivers</h3><p>IMST iM871A and iU891A, Amber AMB8465: one decoder, telegrams with RSSI.</p></a>
+    <a class="card card-link" href="{{ get_url(path='@/docs/security.md') }}"><h3>Security</h3><p>OMS modes 5, 7 and 10, the ELL, fragments, keys as secrets, and what a telegram can prove.</p></a>
     <a class="card card-link" href="{{ get_url(path='@/docs/embedded.md') }}"><h3>Embedded builds</h3><p>No allocator, no dependencies and no panic path on a Cortex-M.</p></a>
     <a class="card card-link" href="{{ get_url(path='@/docs/status.md') }}"><h3>Status</h3><p>What is implemented, what is assumed, and what a real meter still has to confirm.</p></a>
   </div>

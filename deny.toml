@@ -1,7 +1,7 @@
 # `cargo deny check`: licences, advisories and duplicate dependencies.
 #
-# The library has no dependencies (D-001). This file exists so that the first one
-# to arrive is checked rather than waved through.
+# The default build has no dependencies (D-001); the `oms` feature brings the RustCrypto
+# AES modes and `zeroize`. `all-features` makes this check cover them.
 
 [graph]
 all-features = true

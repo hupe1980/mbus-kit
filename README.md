@@ -8,30 +8,41 @@
 
 **[Documentation](https://hupe1980.github.io/mbus-kit/) · [API reference](https://docs.rs/mbus-kit)**
 
-> 🚧 **Pre-release.** Decodes the EN 13757-3 reference telegram exactly and survives
-> malformed input. Not yet checked against a corpus of real meters, and OMS
-> encryption (security modes 5 and 7) is detected but not decrypted yet.
+> 🚧 **Pre-release.** Checked against a corpus of 41 real and published telegrams from
+> 20 manufacturers (libmbus, wmbusmeters, jMBus, OMS Annex N), wired and wireless,
+> plain and encrypted. The API may still change before 1.0.
 
 Heat, water, gas and heat-cost-allocator meters across Europe speak M-Bus: wired
 (EN 13757-2, two-wire bus) or by radio (wireless M-Bus, EN 13757-4, and its OMS
 profile). Both carry the same application layer (EN 13757-3). mbus-kit turns those
-bytes into exact readings:
+bytes into exact, fully described readings:
 
 ```rust
 use mbus_kit::wired::Frame;
-use mbus_kit::{Application, Body};
+use mbus_kit::Application;
 
 fn on_response(bytes: &[u8]) -> Result<(), mbus_kit::Error> {
     let Some((Frame::Long { ci, data, .. }, _)) = Frame::parse(bytes)? else { return Ok(()) };
-    if let Body::Records(records) = Application::parse(ci, data)?.body {
-        for record in records {
-            let r = record?;
-            if let Some(q) = r.quantity() {
-                println!("{} = {q}", r.name()); // "volume = 12.565 m³", exact, never a float
-            }
-        }
+    for record in Application::parse(ci, data)?.records().into_iter().flatten() {
+        println!("{}", record?); // "volume flow · maximum · storage 5 — 0.113 m³/h"
     }
     Ok(())
+}
+```
+
+And by radio, encrypted (feature `oms`):
+
+```rust,ignore
+use mbus_kit::oms::Key;
+use mbus_kit::wireless::{self, Format};
+
+let key = Key::from_hex("0102030405060708090A0B0C0D0E0F11").unwrap();
+let mut buf = [0u8; 512];
+if let Some((telegram, _)) = wireless::open(&raw, Format::A, &key, &mut buf)? {
+    println!("{} · {:?}", telegram.address, telegram.app.authenticity); // Encrypted, or Authenticated { counter }
+    for record in telegram.app.records().into_iter().flatten() {
+        println!("{}", record?); // "volume — 28504.27 m³"
+    }
 }
 ```
 
@@ -39,32 +50,58 @@ fn on_response(bytes: &[u8]) -> Result<(), mbus_kit::Error> {
 
 | Layer | Status |
 |---|---|
-| **Wired link layer** (EN 13757-2): ACK, short, control and long frames, checksum; `SND_NKE`, `REQ_UD2` | ✅ parse and encode, incremental (asks for more bytes) |
-| **Wireless link layer** (EN 13757-4): frame formats A and B, CRC-16/EN-13757 per block | ✅ decode; encode format A |
-| **Application layer** (EN 13757-3): CI `72`/`7A`/`78`/`51`, long and short header, manufacturer, medium, security mode | ✅ |
-| **Data records**: DIF/DIFE (function, storage, tariff, subunit), VIF/VIFE, plain-text VIF, LVAR, filler, manufacturer data | ✅ lazily, without allocating |
-| **Values**: integers, BCD (incl. negative and invalid), dates (types G and F), primary VIF units and exponents | ✅ exact `Quantity` |
-| OMS decryption (security modes 5 and 7, AES-128) | Planned, behind an opt-in feature |
-| VIFE semantics (`FD`/`FB` tables, combinable extensions) | Planned (extensions are exposed raw) |
-| Extended link layer (CI `8C`/`8D`), authentication and fragmentation layer (CI `90`) | Planned |
-| Real-meter capture corpus and differential tests | Next |
+| **Wired link layer** (EN 13757-2): ACK, short, control and long frames, checksum; resynchronising scan for noisy lines | ✅ parse and encode, incremental (asks for more bytes) |
+| **Wired master** (sans-I/O): complete readout with FCB and retries, secondary addressing with wildcards, bus search, set address, baud rate, clock, application reset | ✅ tested against a simulated bus of 250 meters |
+| **Real converters** (`serial::Bus`, std, no dependency): the master over any `Read + Write` — a USB level converter or a TCP gateway; echo, noise and collisions handled, every wait bounded | ✅ simulated converter and a real socket |
+| **JSON** (`json`, `no_std`, no allocation): one object per telegram — meter, authenticity, every record with exact value, unit, storage, tariff | ✅ every corpus telegram checked by a strict parser; fuzzed |
+| **`mbus` tool** (feature `cli`, no dependency): `decode`, `read`, `search`, `listen`, text or `--json`, sets up serial ports itself | ✅ |
+| **Receiver sticks** (`stick`, `no_std`): IMST iM871A, IMST iU891A, Amber AMB8465 — telegrams with RSSI, receive-mode commands | ✅ checked against real captures |
+| **Wireless link layer** (EN 13757-4): frame formats A and B with CRC-16/EN-13757 per block, or CRCs already removed by the receiver | ✅ decode; encode format A |
+| **Extended link layer** (CI `8C`–`8F`) and **authentication and fragmentation layer** (CI `90`), with **fragment reassembly** into your buffer | ✅ checked against OMS Annex N N.3–N.5 |
+| **Compact frames** (CI `79`/`7B`/`73`) and format frames: values without their layout, expanded with a layout cache you own, checked by the full-frame CRC | ✅ |
+| **Transport layer**: CI `72`/`7A`/`78`/`51`, commands `5A`/`5B`, errors `6E`–`70`, alarms `71`/`74`/`75`, `80`/`8A`/`8B` | ✅ |
+| **OMS security** (feature `oms`): mode 5 (AES-CBC), mode 7 (KDF, AES-CBC, **CMAC verified**), mode 10 (AES-CCM, **tag verified**), ELL AES-CTR; keys zeroized, never printed | ✅ checked against OMS Annex N and real meters |
+| **Data records**: DIF/DIFE, VIF/VIFE, plain-text VIF, LVAR, filler, manufacturer data | ✅ lazily, without allocating |
+| **Value information**: primary, `FB`, `FD`, `FD FD` tables and every combinable VIFE (EN 13757-3:2018), typed | ✅ `Kind`, `Modifier`; correction factors applied exactly |
+| **Values**: integers (signed and unsigned), BCD (incl. negative and invalid), IEEE reals (exactly, as decimals), dates and times (types G, J, F, I), time offsets (type M) | ✅ exact `Quantity`, never floats |
+| **Compact profiles** (VIFE `13`/`1E`/`1F`): monthly or interval history as readings with their dates or offsets | ✅ checked against OMS Annex G and N.13 |
+| Mode 13 (TLS), data types K/L | Not yet |
 
 ## Design
 
 - **Sans-I/O.** No serial port, no radio driver, no clock. Feed bytes from an M-Bus level
   converter, a wM-Bus receiver stick or a capture file.
-- **`no_std`, no allocator, no dependencies.** Records borrow from the frame. The release
-  build for a Cortex-M contains no panic path, checked in CI.
+- **`no_std`, no allocator.** The default build has **no dependencies**; `oms` adds only
+  the [RustCrypto](https://github.com/RustCrypto) AES modes and `zeroize`. Records borrow from the frame. The library's
+  release build for a Cortex-M contains no panic path, checked in CI.
 - **Exact.** Readings are `mantissa × 10^exponent` with their unit, never floats.
-  32-bit reals are passed through as raw bits for the caller to decide.
-- **Never panics on input.** Malformed, truncated and random bytes are errors.
+  Correction factors are applied exactly; a VIFE the crate cannot model yields no
+  quantity rather than a wrong one.
+- **Honest about radio.** Every telegram says what was verified: nothing, decrypted, or
+  authenticated by CMAC or CCM tag. A CRC or a mode-5 decryption is not authentication: both can
+  be forged or modified, and the tests show how.
+- **Never panics on input.** Malformed, truncated and random bytes are errors. Fuzzed.
 
 ## Try it
 
 ```sh
-cargo run --example readout                               # the reference telegram
-echo "68 1F 1F 68 08 02 72 …" | cargo run --example decode  # your own capture
-cargo run --example decode -- --wireless < frame.hex        # a wM-Bus frame (format A)
+cargo run --example readout                                   # the reference telegram
+cargo run --example master                                    # read a meter, search a bus (simulated)
+brew install hupe1980/tap/mbus                                 # the `mbus` tool (macOS, Linux)
+cargo install mbus-kit --features cli                         # …or from source; binaries on the releases page
+mbus read /dev/ttyUSB0 5                                       # a wired meter (port set up for you)
+mbus listen /dev/ttyUSB0 --stick im871a --mode t1 --key <32 hex>   # radio meters through a stick
+mbus decode captures.hex --json                                # captures as JSON lines
+just decode tests/corpus/wireless/oms-n13-mode7-profile.hex    # 46-step load profile, type M
+```
+
+`mbus decode` takes one telegram per line, recognises wired and wireless frames and the
+radio format (A, B, CRCs removed) by itself, learns record layouts from full frames to
+expand later compact frames, and joins AFL fragments on consecutive lines. With `--json`,
+every command writes one JSON object per telegram:
+
+```json
+{"meter":{"manufacturer":"ELS","id":"12345678","version":51,"medium":"gas","medium_code":3},"ci":"7A","access":117,"status":0,"authenticity":"authenticated","counter":2739,"body":"records","records":[{"name":"volume","function":"instantaneous","storage":0,"tariff":0,"subunit":0,"modifiers":[],"value":28504.27,"unit":"m3","encrypted":true,"text":"volume — 28504.27 m³"}, …]}
 ```
 
 ## Part of Open Utility Stack

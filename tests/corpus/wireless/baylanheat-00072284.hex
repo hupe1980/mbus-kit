@@ -1,0 +1,9 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver baylanheat
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L379
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"heat","driver":"baylanheat","name":"Heat","id":"00072284","total_kwh":13477.069336,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+15442C0B8422070040047A500000000506479452462F
+= wireless C 44 BYL 00072284 heat (outlet) v64
+= not authenticated
+= energy — ≈ 13.4770693 MWh

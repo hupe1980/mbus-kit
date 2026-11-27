@@ -1,0 +1,72 @@
+# The documentation site (Zola, `site/`): built and link-checked on every pull request
+# that touches it, published to GitHub Pages from `main`.
+#
+# Separate from ci.yml because it deploys: the deploy job alone holds the Pages
+# permissions, and only for a push to `main` (or a manual run).
+name: Site
+
+on:
+  pull_request:
+    paths: ["site/**", ".github/workflows/site.yml"]
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ZOLA_VERSION: 0.23.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: install zola
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/getzola/zola/releases/download/v${ZOLA_VERSION}/zola-v${ZOLA_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C /usr/local/bin zola
+      - id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      # Internal links are checked as errors (site/config.toml). On a deploy the base URL
+      # comes from the Pages configuration, so canonical links and the sitemap are right
+      # on a fork or a custom domain too.
+      - name: build
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_URL" ]; then
+            zola --root site build --base-url "$BASE_URL"
+          else
+            zola --root site build
+          fi
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: site/public
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # A newer commit supersedes an older deployment, but one already running finishes
+    # rather than being cancelled half-published.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

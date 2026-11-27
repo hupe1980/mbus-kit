@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-mbus-kit = { path = ".." }
+mbus-kit = { path = "..", features = ["oms"] }
 
 [workspace]
 members = ["."]
@@ -31,6 +31,48 @@ bench = false
 [[bin]]
 name = "records"
 path = "fuzz_targets/records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "oms"
+path = "fuzz_targets/oms.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "master"
+path = "fuzz_targets/master.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fragment"
+path = "fuzz_targets/fragment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stick"
+path = "fuzz_targets/stick.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serial"
+path = "fuzz_targets/serial.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
 test = false
 doc = false
 bench = false

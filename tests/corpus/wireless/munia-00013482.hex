@@ -1,0 +1,11 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver munia
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L2093
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"room sensor","driver":"munia","name":"TempoHygro","id":"00013482","status":"OK","current_temperature_c":20.1,"current_relative_humidity_rh":65.7,"timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+2E44B05C82340100021B7A460000002F2F0A6601020AFB1A570602FD971D00002F2F2F2F2F2F2F2F2F2F2F2F2F2F2F
+= wireless C 44 WEP 00013482 room sensor v2
+= not authenticated
+= external temperature — 20.1 °C
+= relative humidity — 65.7 %
+= error flags · standard conformant — 0

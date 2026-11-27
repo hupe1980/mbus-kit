@@ -1,14 +1,14 @@
 ```rust
-use mbus_kit::wireless::{Format, decode};
-use mbus_kit::{Application, Body};
+use mbus_kit::oms::Key;
+use mbus_kit::wireless::{self, Format};
 
-let mut buf = [0u8; 256];
-if let Some((frame, _)) = decode(&raw, Format::A, &mut buf)? {
-    println!("{} {:?}", frame.address.manufacturer,
-             frame.address.id_number());
-    match Application::parse(frame.ci, frame.payload)?.body {
-        Body::Records(r) => { /* … */ }
-        Body::Encrypted { security, .. } => { /* OMS mode 5/7 */ }
+let key = Key::from_hex(KEY_SHEET).unwrap();
+let mut buf = [0u8; 512];
+if let Some((t, _)) = wireless::open(&raw, Format::A, &key, &mut buf)? {
+    // ELS 12345678 gas v51 · Authenticated { counter: 2739 }
+    println!("{} · {:?}", t.address, t.app.authenticity);
+    for r in t.app.records().into_iter().flatten() {
+        println!("{}", r?); // "volume — 28504.27 m³"
     }
 }
 ```

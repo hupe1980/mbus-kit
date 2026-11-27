@@ -1,0 +1,12 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.7 SND-IR: https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+key 0102030405060708090A0B0C0D0E0F11
+51469315785634123303EFB58C80457A01004805D2B70B3FBC1A1580C85ED79B92CAA1D95341B609EF603AD36294853A72B2067D26BD2B5FDDC2374D29D0CD08AB4858C5614E8B56E6C2175962DB0F01AA2A62E1A7B12EE4B5F63F440569
+= wireless C 46 ELS 12345678 gas v51
+= decrypted, not authenticated
+= model version — BKG4
+= hardware version — 105
+= firmware version — 101
+= software version — 100
+= customer location — DE1234564907400000000000012345678

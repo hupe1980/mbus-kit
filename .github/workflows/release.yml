@@ -1,0 +1,329 @@
+# A version tag (`v0.2.0`) publishes: the `mbus` tool for Linux, macOS and Windows with
+# checksums, an SBOM and build provenance as a GitHub release, the Homebrew formula in
+# hupe1980/homebrew-tap, and the crate on crates.io. A manual run builds, packages and smoke-tests everything and publishes
+# nothing: the publishing jobs are gated on the trigger being a tag. That is the dry run,
+# and it needs no flag anybody could forget to set.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel: a half-finished publish is worse than a queued one.
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: The tag matches Cargo.toml, and the changelog has the version
+        id: version
+        run: |
+          set -euo pipefail
+          manifest="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$manifest" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [ "$tag" != "$manifest" ]; then
+              echo "::error::tag v$tag does not match version $manifest in Cargo.toml"; exit 1
+            fi
+            if ! grep -q "^## \[$manifest\]" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no section [$manifest]"; exit 1
+            fi
+          fi
+          echo "releasing $manifest"
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          components: rustfmt, clippy
+          targets: thumbv7em-none-eabihf, riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2
+        with:
+          tool: just
+      # The tagged commit passed CI on main, or the gate runs here (a tag on a commit CI
+      # never saw, e.g. a hotfix branch).
+      - name: CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs"
+          conclusion=$(gh api --method GET "$runs" -f head_sha="$sha" -f event=push -F per_page=1 \
+            --jq '.workflow_runs[0].conclusion // "none"')
+          if [ "$conclusion" = "success" ]; then
+            echo "CI passed for $sha."
+          else
+            echo "CI result for $sha: $conclusion; running the gates here."
+            just test lint no-std panic-free
+          fi
+      - name: The crate packages and builds from its own tarball
+        run: cargo package --locked
+
+  # The `mbus` tool, built and smoke-tested natively on each platform.
+  binaries:
+    name: mbus (${{ matrix.target }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl: static binaries that run on any Linux (and under Homebrew on Linux).
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { runner: macos-latest, target: aarch64-apple-darwin }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: ${{ matrix.target }}
+      # Embed the dependency tree in the executable (`cargo audit bin` can read it).
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2
+        with:
+          tool: cargo-auditable
+      - run: cargo auditable build --release --locked --features cli --bin mbus --target ${{ matrix.target }}
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=target/${{ matrix.target }}/release/mbus
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            file "$exe" | grep -q "statically linked" || { file "$exe"; echo "::error::not static"; exit 1; }
+          fi
+          "$exe" --version
+          "$exe" decode tests/corpus/wireless/oms-n2.3-mode7-afl.hex | grep -q "authenticated (counter 2739)"
+          "$exe" decode tests/corpus/wireless/oms-n13-mode7-profile.hex --json | grep -q '"elements_are":"increments"'
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="mbus-${{ needs.verify.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          exe=target/${{ matrix.target }}/release/mbus
+          [ -f "$exe.exe" ] && exe="$exe.exe"
+          cp "$exe" "dist/$name/"
+          cp README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd dist && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mbus-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  sbom:
+    name: SBOM
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2
+        with:
+          tool: cargo-cyclonedx
+      # The inventory of what the `mbus` binary contains (the `cli` feature: std + oms).
+      - name: CycloneDX
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --features cli
+          # The file name differs between cargo-cyclonedx versions: take the one it wrote.
+          bom=$(find . -maxdepth 1 -name '*.cdx.json' | head -1)
+          test -n "$bom"
+          mkdir -p sbom
+          cp "$bom" "sbom/mbus-kit-${{ needs.verify.outputs.version }}.cdx.json"
+          jq -e '.metadata.component.name == "mbus-kit"' sbom/*.cdx.json > /dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbom
+          path: sbom/*.json
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [verify, binaries, sbom]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build provenance: a signed statement in a public transparency log that these
+      # archives came out of this workflow at this commit (`gh attestation verify`).
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          # Plain file names, so `sha256sum -c SHA256SUMS` works next to the downloads.
+          sha256sum -- *.tar.gz *.zip *.json > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: checksums
+          path: artifacts/SHA256SUMS
+          if-no-files-found: error
+      - name: Release notes from the changelog
+        run: |
+          set -euo pipefail
+          v="${{ needs.verify.outputs.version }}"
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ && on {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          name: mbus-kit ${{ needs.verify.outputs.version }}
+          body_path: notes.md
+          prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/*.json
+            artifacts/SHA256SUMS
+
+  # Homebrew: Formula/mbus.rb in hupe1980/homebrew-tap (`brew install hupe1980/tap/mbus`).
+  # Needs the environment `homebrew` with HOMEBREW_APP_ID and HOMEBREW_APP_PRIVATE_KEY: a
+  # GitHub App installed on the tap only, with contents: write. This job alone holds that
+  # token; prereleases are not published to the tap.
+  tap:
+    name: Homebrew tap
+    needs: [verify, release]
+    if: github.event_name == 'push' && !contains(needs.verify.outputs.version, '-')
+    runs-on: ubuntu-latest
+    environment: homebrew
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: checksums
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: hupe1980
+          repositories: homebrew-tap
+          permission-contents: write
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: hupe1980/homebrew-tap
+          token: ${{ steps.app-token.outputs.token }}
+          path: tap
+          persist-credentials: true
+      - name: Update the formula
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Formula
+          packaging/homebrew/formula.sh "$VERSION" SHA256SUMS > tap/Formula/mbus.rb
+          cd tap
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "mbus-kit release"
+            git config user.email "mbus-kit-release@users.noreply.github.com"
+            git add Formula/mbus.rb
+            git commit -m "mbus $VERSION"
+            git push
+          fi
+
+  # The published formula installs and passes its own test, on macOS and on Linux.
+  brew:
+    name: Homebrew install (${{ matrix.runner }})
+    needs: [verify, tap]
+    runs-on: ${{ matrix.runner }}
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-latest, ubuntu-latest]
+    steps:
+      - name: Install and test
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! command -v brew > /dev/null; then eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; fi
+          brew install hupe1980/tap/mbus
+          brew test mbus
+          [ "$(mbus --version)" = "mbus $VERSION" ]
+
+  crates-io:
+    name: Publish to crates.io
+    needs: [release]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Named so crates.io's trusted publishing can be scoped to it, and so a required
+    # reviewer can be added later without touching this file.
+    environment: crates-io
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      # A re-run after a successful publish finds the version already there and succeeds.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -uo pipefail
+          out=$(cargo publish --locked 2>&1) && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" -ne 0 ] && ! echo "$out" | grep -qE "already (uploaded|exists)"; then
+            exit "$rc"
+          fi

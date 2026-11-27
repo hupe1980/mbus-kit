@@ -12,14 +12,25 @@ keywords = ["mbus", "wmbus", "oms", "smart-meter", "metering"]
 categories = ["embedded", "encoding", "parser-implementations", "no-std"]
 include = ["/src", "/examples", "/README.md", "/CHANGELOG.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
-# No dependencies, on purpose (D-001). OMS decryption (AES) will arrive behind an
-# opt-in feature (ROADMAP M2), so a wired-only build never pulls in a cipher.
+# No dependencies in the default build, on purpose (D-001). The `oms` feature adds the
+# RustCrypto AES modes and `zeroize` for OMS security; nothing else ever.
 [dependencies]
+aes = { version = "0.8", default-features = false, optional = true }
+cbc = { version = "0.1", default-features = false, optional = true }
+ccm = { version = "0.5", default-features = false, optional = true }
+cmac = { version = "0.7", default-features = false, optional = true }
+ctr = { version = "0.9", default-features = false, optional = true }
+zeroize = { version = "1", default-features = false, optional = true }
 
 [features]
 default = ["std"]
 # `std` adds `std::error::Error` for `Error` and nothing else.
 std = []
+# OMS security: modes 5 and 7 (AES-128-CBC, CMAC key derivation and MAC), mode 10
+# (AES-128-CCM) and the ELL's AES-128-CTR. Keys are zeroized on drop.
+# The `mbus` command-line tool: decode, read, search, listen (no further dependency).
+cli = ["std", "oms"]
+oms = ["dep:aes", "dep:cbc", "dep:ccm", "dep:ctr", "dep:cmac", "dep:zeroize", "aes/zeroize", "cbc/zeroize", "ctr/zeroize", "cmac/zeroize"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -30,12 +41,20 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+[[bin]]
+name = "mbus"      # cargo install mbus-kit --features cli
+path = "src/bin/mbus.rs"
+required-features = ["cli"]
+
 [[example]]
 name = "readout"   # the EN 13757-3 reference water meter telegram, decoded
 path = "examples/readout.rs"
 required-features = ["std"]
 
+
 [[example]]
-name = "decode"    # hex on stdin (wired or wireless), records out
-path = "examples/decode.rs"
+name = "master"    # read a meter and search a bus (scripted bus)
+path = "examples/master.rs"
 required-features = ["std"]
+
+

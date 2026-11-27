@@ -1,0 +1,15 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver qcaloric
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L2314
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"heat cost allocation","driver":"qcaloric","name":"HCA1","id":"91835132","consumption_at_set_date_hca":366,"consumption_at_set_date_1_hca":366,"current_consumption_hca":304,"device_datetime":"2021-01-25 22:20","error_date":"","set_date":"2020-09-30","set_date_1":"2020-09-30","status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+! truncated-last-record: the telegram ends with DD 2F, a record header without data: every complete record decodes, then the iterator ends with an error (wmbusmeters ignores the rest).
+format stripped
+284465323251839134087A4F0000000B6E0403004B6E660300426C9E29326CFFFF046D1416B921DD2F
+= wireless C 44 LSE 91835132 heat cost allocator v52
+= not authenticated
+= heat cost allocation — 304
+= heat cost allocation · storage 1 — 366
+= date · storage 1 — 2020-09-30
+= date · during error — 2027-15-31 (invalid)
+= date and time — 2021-01-25 22:20
+= error: input ended in the middle of a value

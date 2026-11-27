@@ -1,0 +1,6 @@
+# libmbus test/test-frames/example_binary16_lvar.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: example_binary16_lvar.norm.xml
+6825256808007200000000CD250102000000000D7C025750F096075B2A27A693013DB51AB3DCD13E17D516
+= wired C 08 address 0
+= meter INM 00000000 electricity v1
+= not authenticated
+= value in PW — 96075B2A27A693013DB51AB3DCD13E17

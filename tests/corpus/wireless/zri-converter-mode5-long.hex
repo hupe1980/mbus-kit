@@ -1,0 +1,15 @@
+# jMBus WMbusDemoMessageTest.testMessage3 @ 9cb761f; IV from the TPL address; the byte after L (71) is outside the frame
+# licence: MPL-2.0; telegram bytes and key only
+# stripped (CRCs removed by the receiver)
+! bytes-after-l: the source has one byte after the frame its L field announces; it is not part of the telegram.
+format stripped
+key A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1
+3644496A0228004401377232597049496A01073500202518AC74B56F3119F53981507265B808AF7D423C429550112536BDD6F25BBB63D971
+= wireless C 44 ZRI 44002802 radio converter (meter side) v1
+= meter ZRI 49705932 water v1
+= decrypted, not authenticated
+= volume — 0.494 m³
+= date — 2018-10-23
+= volume · storage 1 — 0.274 m³
+= volume · storage 2 — 0.325 m³
+= error flags — 1024

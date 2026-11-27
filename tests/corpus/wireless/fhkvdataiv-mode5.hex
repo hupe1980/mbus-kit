@@ -1,0 +1,15 @@
+# wmbusmeters tests/generated_tests.xmq#L821 @ cf4a01e; expected current_consumption_hca 2, set_date 2020-12-31, consumption_at_set_date_hca 25
+# licence: GPL-3.0; telegram bytes, key and expected values only
+# stripped (CRCs removed by the receiver)
+! compact-profile: the last record (VIFE 1F) is 14 monthly increments; decoded as a profile (tests/profile.rs accumulates it to the meter's storage-1 value 25, following OMS Annex G; wmbusmeters reverses the order and does not accumulate).
+format stripped
+key FCF41938F63432975B52505F547FCEDF
+4E4468507620541494087AAD004005089D86B62A329B3439873999738F82461ABDE3C7AC78692B363F3B41EB68607F9C9160F550769B065B6EA00A2E44346E29FF5DC5CB86283C69324AD33D137F6F
+= wireless C 44 TCH 14542076 heat cost allocator v148
+= decrypted, not authenticated
+= heat cost allocation — 2
+= heat cost allocation · storage 1 — 25
+= date · storage 1 — 2020-12-31
+= heat cost allocation · storage 8 — 0
+= date · storage 8 — 2019-10-31
+= heat cost allocation · compact profile · storage 8 — 14 increments, every month

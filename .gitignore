@@ -43,3 +43,6 @@ rustc-ice-*.txt
 
 # Spec Kit skills generated for Codex: local, like .specify/ and .claude/.
 /.agents/skills/speckit-*/
+
+# Bug reports and feature requests for upstream tools, collected while working: local only.
+/FEEDBACK_*.md

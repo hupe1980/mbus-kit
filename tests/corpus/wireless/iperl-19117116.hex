@@ -1,0 +1,11 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver iperl
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L1242
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"water","driver":"iperl","name":"SensusWater","id":"19117116","max_flow_m3h":0,"total_m3":193.457,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+2044AE4C0621050038377216711119AE4C0B076C0000000413B1F30200023B0000
+= wireless C 44 SEN 00052106 radio converter (meter side) v56
+= meter SEN 19117116 water v11
+= not authenticated
+= volume — 193.457 m³
+= volume flow — 0.000 m³/h

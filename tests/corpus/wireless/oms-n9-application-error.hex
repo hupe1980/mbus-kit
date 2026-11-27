@@ -1,0 +1,7 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.9 RSP-UD application: https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+12086850785634128F0896898C80156E0202000001B5A3
+= wireless C 08 TCH 12345678 heat cost allocator v143
+= not authenticated
+= application error [01]

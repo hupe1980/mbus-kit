@@ -1,0 +1,18 @@
+# libmbus test/test-frames/EFE_Engelmann-WaterStar.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: EFE_Engelmann-WaterStar.norm.xml
+! per-pulse-vife: the last volume carries VIFE 28 (increment per input pulse): 8 × 10^-6 m³ per pulse, not a volume. No quantity; libmbus prints 0.000008 m³.
+68515168080B7254029904C51400060C27000004782E254C00046D0A0CCD1304134C01000044134B0100008401134C010000426CBF1C026CDF1C043B00000000143B160800000223A70401FD1700049028080000003F16
+= wired C 08 address 11
+= meter EFE 04990254 warm water v0
+= not authenticated
+= fabrication number — 4990254
+= date and time — 2014-03-13 12:10
+= volume — 0.332 m³
+= volume · storage 1 — 0.331 m³
+= volume · storage 2 — 0.332 m³
+= date · storage 1 — 2013-12-31
+= date — 2014-12-31
+= volume flow — 0.000 m³/h
+= volume flow · maximum — 2.070 m³/h
+= on time — 1191 d
+= error flags — 0
+= volume · increment per input pulse, channel 0 — 8

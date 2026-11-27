@@ -1,0 +1,18 @@
+# libmbus test/test-frames/ELV-Elvaco-CMa10.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: ELV-Elvaco-CMa10.norm.xml
+! plain-text-before-vife: the ASCII unit follows the VIF FC directly, before the VIFE chain; EN 13757-3:2018 Table C.2 puts it after the VIFEs. Read by the fallback order; values match libmbus (54.10 %RH).
+68535368080B7261150124961516003F00000001FD1B0202FC0348522574221522FC0348522574240D12FC0348522574C31C02652E0822655C051265A20B01721842652C088201651F080C786115012403FD0F0000041FBD16
+= wired C 08 address 11
+= meter ELV 24011561 other v22
+= not authenticated
+= digital input — 2
+= value — 54.10 %RH
+= value · minimum — 33.64 %RH
+= value · maximum — 73.63 %RH
+= external temperature — 20.94 °C
+= external temperature · minimum — 13.72 °C
+= external temperature · maximum — 29.78 °C
+= averaging duration — 24 h
+= external temperature · storage 1 — 20.92 °C
+= external temperature · storage 2 — 20.79 °C
+= fabrication number — 24011561
+= software version — 262144

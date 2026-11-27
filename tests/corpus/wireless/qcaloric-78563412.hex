@@ -1,0 +1,16 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver qcaloric
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/simulations/simulation_c1.txt#L24
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"heat cost allocation","driver":"qcaloric","name":"MyElement","id":"78563412","status":"OK","current_consumption_hca":127,"set_date":"2018-12-31","consumption_at_set_date_hca":145,"set_date_1":"2018-12-31","consumption_at_set_date_1_hca":145,"set_date_17":"2019-01-31","consumption_at_set_date_17_hca":79,"error_date":"","device_datetime":"2019-02-20 11:32","timestamp":"1111-11-11T11:11:11Z"}
+! expected (wmbusmeters simulation_c1.txt): current_consumption_hca 127, set_date 2018-12-31 (145), set_date_17 2019-01-31 (79), device_datetime 2019-02-20 11:32
+format stripped
+314493441234567835087A740000200B6E2701004B6E450100426C5F2CCB086E790000C2086C7F21326CFFFF046D200B7422
+= wireless C 44 QDS 78563412 heat cost allocator v53
+= not authenticated
+= heat cost allocation — 127
+= heat cost allocation · storage 1 — 145
+= date · storage 1 — 2018-12-31
+= heat cost allocation · storage 17 — 79
+= date · storage 17 — 2019-01-31
+= date · during error — 2027-15-31 (invalid)
+= date and time — 2019-02-20 11:32

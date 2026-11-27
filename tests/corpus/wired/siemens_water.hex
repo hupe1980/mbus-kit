@@ -1,0 +1,16 @@
+# libmbus test/test-frames/siemens_water.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: siemens_water.norm.xml
+! zero-date: the type G date "during error" is 00 00, an invalid date (libmbus prints 2000-00-00).
+685959680800728213020865329906EB0000000C13010100000B22520902046D38086E19326C00000C788213020806FD0C0A000100FA010DFD0B05313248465701FD0E000B3B0000000F37FD170000000000000000027A0D0002780D001116
+= wired C 08 address 0
+= meter LSE 08021382 warm water v153
+= not authenticated
+= volume — 0.101 m³
+= on time — 20952 h
+= date and time — 2011-09-14 08:56
+= date · during error — 2000-00-00 (invalid)
+= fabrication number — 8021382
+= model version — 2173253517322
+= parameter set — WFH21
+= firmware version — 0
+= volume flow — 0.000 m³/h
+= manufacturer data 37 FD 17 00 00 00 00 00 00 00 00 02 7A 0D 00 02 78 0D 00

@@ -1,0 +1,38 @@
+# libmbus test/test-frames/EMU_EMU-Professional-375-M-Bus.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: EMU_EMU-Professional-375-M-Bus.norm.xml
+! manufacturer-vife: power, voltage and current records carry VIFE FF xx (manufacturer specific: the phase). No quantity is claimed; libmbus ignores the VIFE and prints -2 W, 225.7 V. The records without it match.
+68F4F46808007229260300B5151002020000000C7829260300841003540500008420030000000084904003AE1E000084A040030000000004ABFF01FEFFFFFF04ABFF020000000004ABFF0300000000042BFEFFFFFF848040ABFF010E000000848040ABFF0200000000848040ABFF03000000008480402B0E00000002FDC8FF01D10802FDC8FF02000002FDC8FF03000022FDC8FF01520722FDC8FF02000022FDC8FF03000012FDC8FF016A0912FDC8FF02000012FDC8FF03000003FDD9FF01BEFFFF03FDD9FF0200000003FDD9FF0300000003FD59BEFFFF01FFE1FF010D01FFE1FF020001FFE1FF030002FF52F40102FD60380001FD17007416
+= wired C 08 address 0
+= meter EMU 00032629 electricity v16
+= not authenticated
+= fabrication number — 32629
+= energy · tariff 1 — 1.364 kWh
+= energy · tariff 2 — 0 Wh
+= energy · tariff 1 · subunit 2 — 7.854 kWh
+= energy · tariff 2 · subunit 2 — 0 Wh
+= power · manufacturer specific — -2
+= power · manufacturer specific — 0
+= power · manufacturer specific — 0
+= power — -2 W
+= power · manufacturer specific · subunit 2 — 14
+= power · manufacturer specific · subunit 2 — 0
+= power · manufacturer specific · subunit 2 — 0
+= power · subunit 2 — 14 W
+= voltage · manufacturer specific — 2257
+= voltage · manufacturer specific — 0
+= voltage · manufacturer specific — 0
+= voltage · manufacturer specific · minimum — 1874
+= voltage · manufacturer specific · minimum — 0
+= voltage · manufacturer specific · minimum — 0
+= voltage · manufacturer specific · maximum — 2410
+= voltage · manufacturer specific · maximum — 0
+= voltage · manufacturer specific · maximum — 0
+= current · manufacturer specific — -66
+= current · manufacturer specific — 0
+= current · manufacturer specific — 0
+= current — -0.066 A
+= manufacturer specific — 13
+= manufacturer specific — 0
+= manufacturer specific — 0
+= manufacturer specific — 500
+= reset counter — 56
+= error flags — 0

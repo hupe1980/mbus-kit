@@ -1,0 +1,22 @@
+# libmbus test/test-frames/ELS_Elster-F96-Plus.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: ELS_Elster-F96-Plus.norm.xml
+! bcd-error-marker: power and volume flow "during error" are BCD with digits above 9, the meter's error marker: Value::InvalidBcd (D-004); libmbus prints 13131113 W.
+686868680800725139494493152F04A17000000C06000000008C1006000000008C2013000000000C13000000003C2BBDEBDDDD3B3BBDEBDD0A5A27020A5E26020A6201000A273007046D090DCD134C06000000004C1300000000CC100600000000CC201300000000426CBF154016
+= wired C 08 address 0
+= meter ELS 44493951 heat (outlet) v47
+= not authenticated
+= energy — 0 Wh
+= energy · tariff 1 — 0 Wh
+= volume · tariff 2 — 0.000 m³
+= volume — 0.000 m³
+= power · during error — invalid BCD DDDDEBBD
+= volume flow · during error — invalid BCD DDEBBD
+= flow temperature — 22.7 °C
+= return temperature — 22.6 °C
+= temperature difference — 0.1 K
+= operating time — 730 d
+= date and time — 2014-03-13 13:09
+= energy · storage 1 — 0 Wh
+= volume · storage 1 — 0.000 m³
+= energy · storage 1 · tariff 1 — 0 Wh
+= volume · storage 1 · tariff 2 — 0.000 m³
+= date · storage 1 — 2013-05-31

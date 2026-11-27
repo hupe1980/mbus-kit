@@ -1,35 +1,105 @@
 use core::fmt;
 
+use crate::time::{Date, DateTime, Time};
+
 /// A record's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Value<'a> {
     /// No data.
     None,
-    /// A binary integer.
+    /// A binary integer (data type B, two's complement).
     Int(i64),
+    /// An unsigned binary integer (data type C, announced by the combinable extension
+    /// VIFE `FC 11`).
+    UInt(u64),
     /// A BCD number.
     Bcd(i64),
     /// A BCD field with digits outside 0–9 (meters use this to signal errors). The raw
     /// bytes, as transmitted.
     InvalidBcd(&'a [u8]),
-    /// A 32-bit IEEE 754 real, as raw bits. Not converted: values in this crate are
-    /// exact (D-004), so turning these bits into a number is the caller's decision.
+    /// A 32-bit IEEE 754 real, as raw bits. [`Value::as_decimal`] and
+    /// [`Record::quantity`](crate::Record::quantity) give its exact decimal value; no
+    /// float is involved (D-012).
     Real32(u32),
     /// A date (type G).
     Date(Date),
-    /// A date and time (type F).
+    /// A time of day (type J).
+    Time(Time),
+    /// A date and time (type F or I).
     DateTime(DateTime),
     /// A text (variable length, LVAR `00`–`BF`), as transmitted (M-Bus sends it reversed).
     Text(&'a [u8]),
-    /// Binary data longer than 8 bytes.
+    /// Binary data longer than 8 bytes (LVAR `E9`–`EF`, `F0`–`F6`).
     Bytes(&'a [u8]),
+    /// A duration in seconds, exact: data type M in its relative form (EN 13757-3:2018
+    /// Table A.12, e.g. "offset 3 s" in OMS Annex N N.13).
+    Duration(Quantity),
+}
+
+impl fmt::Display for Value<'_> {
+    /// Integers in decimal, dates ISO-8601-like, text in reading order. Bytes from the
+    /// meter are never written raw: anything but printable ASCII is escaped as `\xNN`,
+    /// so a crafted telegram cannot put control sequences into a terminal or log
+    /// (001-describe-every-record/SR-003).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::None => f.write_str("—"),
+            Self::Int(v) | Self::Bcd(v) => write!(f, "{v}"),
+            Self::UInt(v) => write!(f, "{v}"),
+            Self::InvalidBcd(b) => {
+                f.write_str("invalid BCD ")?;
+                hex(f, b.iter().rev())
+            }
+            Self::Real32(bits) => match real32_exact(bits) {
+                Some((mantissa, exponent)) => write!(f, "{}", Quantity { mantissa, exponent, unit: None }),
+                None => write!(f, "IEEE 754 0x{bits:08X}"),
+            },
+            Self::Date(d) => write!(f, "{d}"),
+            Self::Time(t) => write!(f, "{t}"),
+            Self::DateTime(t) => write!(f, "{t}"),
+            Self::Text(t) => escaped(f, t.iter().rev()),
+            Self::Bytes(b) => hex(f, b.iter()),
+            Self::Duration(q) => write!(f, "{q}"),
+        }
+    }
+}
+
+/// Printable ASCII as is, everything else as `\xNN`.
+pub(crate) fn escaped<'b>(f: &mut fmt::Formatter<'_>, bytes: impl Iterator<Item = &'b u8>) -> fmt::Result {
+    for &b in bytes {
+        if b == b' ' || b.is_ascii_graphic() && b != b'\\' {
+            write!(f, "{}", char::from(b))?;
+        } else {
+            write!(f, "\\x{b:02x}")?;
+        }
+    }
+    Ok(())
+}
+
+fn hex<'b>(f: &mut fmt::Formatter<'_>, bytes: impl Iterator<Item = &'b u8>) -> fmt::Result {
+    for &b in bytes {
+        write!(f, "{b:02X}")?;
+    }
+    Ok(())
 }
 
 impl Value<'_> {
+    /// The value as an exact decimal `mantissa × 10^exponent`: integers and valid BCD
+    /// with exponent 0, and 32-bit reals converted exactly (every finite IEEE 754
+    /// single is a finite decimal; D-012). `None` for NaN, infinities, reals too large
+    /// or too small for an `i128` mantissa, and non-numeric values.
+    pub fn as_decimal(&self) -> Option<(i128, i8)> {
+        match *self {
+            Self::Real32(bits) => real32_exact(bits),
+            _ => self.as_integer().map(|m| (m, 0)),
+        }
+    }
+
     /// The value as an integer, for binary integers and valid BCD.
     pub const fn as_integer(&self) -> Option<i128> {
         match *self {
             Self::Int(v) | Self::Bcd(v) => Some(v as i128),
+            Self::UInt(v) => Some(v as i128),
             _ => None,
         }
     }
@@ -42,12 +112,76 @@ impl Value<'_> {
     }
 }
 
+/// The exact decimal value of an IEEE 754 single: `m × 2^e` is `m × 5^-e × 10^e`.
+fn real32_exact(bits: u32) -> Option<(i128, i8)> {
+    let negative = bits >> 31 != 0;
+    let biased = (bits >> 23) & 0xFF;
+    let fraction = bits & 0x007F_FFFF;
+    if biased == 0xFF {
+        return None; // infinity or NaN
+    }
+    let (mut m, mut e) = if biased == 0 {
+        (i128::from(fraction), -149i32)
+    } else {
+        (i128::from(fraction | 0x0080_0000), i32::try_from(biased).ok()? - 150)
+    };
+    if m == 0 {
+        return Some((0, 0));
+    }
+    while m % 2 == 0 {
+        m /= 2;
+        e += 1;
+    }
+    let (mantissa, exponent) = if e >= 0 {
+        (m.checked_mul(2i128.checked_pow(e.unsigned_abs())?)?, 0)
+    } else {
+        let k = e.unsigned_abs();
+        (m.checked_mul(5i128.checked_pow(k)?)?, i8::try_from(e).ok()?)
+    };
+    Some((if negative { -mantissa } else { mantissa }, exponent))
+}
+
 /// Little-endian two's complement of 1 to 8 bytes.
 pub(crate) fn le_signed(bytes: &[u8]) -> i64 {
     let negative = bytes.last().is_some_and(|b| b & 0x80 != 0);
     let start: u64 = if negative { u64::MAX } else { 0 };
     let raw = bytes.iter().rev().fold(start, |acc, &b| (acc << 8) | u64::from(b));
     i64::from_le_bytes(raw.to_le_bytes())
+}
+
+/// Data type M (LVAR, 2–10 bytes): a two's-complement count, then a header byte with
+/// the resolution (bits 6–5: 2 s, 1 s, 1/256 s, 1/32768 s) and the time offset (bits 4–0).
+/// Only the relative form (offset `10000b`) is decoded; the absolute form's epoch is not
+/// public, so it stays raw. The most negative count means invalid.
+pub(crate) fn type_m(bytes: &[u8]) -> Option<Quantity> {
+    let (&header, count) = bytes.split_last()?;
+    if header & 0x1F != 0x10 || count.is_empty() || count.len() > 8 {
+        return None;
+    }
+    let c = i128::from(le_signed(count));
+    let min = -(1i128 << (8 * count.len() - 1));
+    if c == min {
+        return None;
+    }
+    // 2 s, 1 s, 1/256 s = 390625 × 10^-8 s, 1/32768 s = 30517578125 × 10^-15 s: exact.
+    let (factor, exponent) = match (header >> 5) & 0x03 {
+        0 => (2, 0),
+        1 => (1, 0),
+        2 => (390_625, -8),
+        _ => (30_517_578_125, -15),
+    };
+    // A duration has no register resolution to keep: drop trailing zeros (still exact).
+    let (mut mantissa, mut exponent) = (c.checked_mul(factor)?, exponent);
+    while exponent < 0 && mantissa % 10 == 0 {
+        mantissa /= 10;
+        exponent += 1;
+    }
+    Some(Quantity { mantissa, exponent, unit: Some(Unit::Seconds) })
+}
+
+/// Little-endian unsigned integer of 1 to 8 bytes.
+pub(crate) fn le_unsigned(bytes: &[u8]) -> u64 {
+    bytes.iter().rev().fold(0u64, |acc, &b| (acc << 8) | u64::from(b))
 }
 
 /// Decode little-endian BCD. A most significant nibble of `F` marks a negative number
@@ -117,15 +251,92 @@ pub enum Unit {
     Hours,
     /// Day.
     Days,
+    /// Month (calendar).
+    Months,
+    /// Year (calendar).
+    Years,
+    /// Volt.
+    Volt,
+    /// Ampere.
+    Ampere,
+    /// Hertz.
+    Hertz,
+    /// Percent (relative humidity).
+    Percent,
+    /// Degree Fahrenheit.
+    Fahrenheit,
+    /// Calorie.
+    Calorie,
+    /// Cubic foot.
+    CubicFeet,
+    /// US gallon.
+    UsGallon,
+    /// US gallon per minute.
+    UsGallonPerMin,
+    /// US gallon per hour.
+    UsGallonPerH,
+    /// Volt-ampere (apparent power).
+    VoltAmpere,
+    /// Volt-ampere reactive (reactive power).
+    Var,
+    /// Volt-ampere hour (apparent energy).
+    VaH,
+    /// Volt-ampere reactive hour (reactive energy).
+    VarH,
+    /// Degree of angle (phase).
+    Degree,
+    /// Decibel-milliwatt (signal level).
+    Dbm,
+    /// Units of the local legal currency.
+    Currency,
+    /// Baud.
+    Baud,
+    /// Bit times (response delay).
+    BitTimes,
+    /// Parts per million.
+    Ppm,
+    /// Parts per billion.
+    Ppb,
+    /// Microgram per cubic metre.
+    MicrogramPerM3,
+    /// Count per cubic metre.
+    PerM3,
+    /// Lux.
+    Lux,
+    /// Candela.
+    Candela,
+    /// Watt per square metre.
+    WattPerM2,
+    /// Metre per second.
+    MetrePerS,
+    /// A-weighted decibel.
+    Dba,
+    /// Formazin nephelometric unit (turbidity).
+    Fnu,
+    /// pH.
+    Ph,
+    /// Millimetre.
+    Millimetre,
 }
 
 impl Unit {
+    /// Seconds, minutes, hours or days from the low two bits of a code.
     pub(crate) const fn duration(nn: u8) -> Self {
         match nn & 0x03 {
             0 => Self::Seconds,
             1 => Self::Minutes,
             2 => Self::Hours,
             _ => Self::Days,
+        }
+    }
+
+    /// Hours, days, months or years from the low two bits (`FD 68`–`6F`).
+    pub(crate) const fn long_duration(pp: u8) -> Self {
+        match pp & 0x03 {
+            0 => Self::Hours,
+            1 => Self::Days,
+            2 => Self::Months,
+            _ => Self::Years,
         }
     }
 
@@ -149,6 +360,39 @@ impl Unit {
             Self::Minutes => "min",
             Self::Hours => "h",
             Self::Days => "d",
+            Self::Months => "months",
+            Self::Years => "years",
+            Self::Volt => "V",
+            Self::Ampere => "A",
+            Self::Hertz => "Hz",
+            Self::Percent => "%",
+            Self::Fahrenheit => "°F",
+            Self::Calorie => "cal",
+            Self::CubicFeet => "ft³",
+            Self::UsGallon => "US gal",
+            Self::UsGallonPerMin => "US gal/min",
+            Self::UsGallonPerH => "US gal/h",
+            Self::VoltAmpere => "VA",
+            Self::Var => "var",
+            Self::VaH => "VAh",
+            Self::VarH => "varh",
+            Self::Degree => "°",
+            Self::Dbm => "dBm",
+            Self::Currency => "currency units",
+            Self::Baud => "Bd",
+            Self::BitTimes => "bit times",
+            Self::Ppm => "ppm",
+            Self::Ppb => "ppb",
+            Self::MicrogramPerM3 => "µg/m³",
+            Self::PerM3 => "/m³",
+            Self::Lux => "lx",
+            Self::Candela => "cd",
+            Self::WattPerM2 => "W/m²",
+            Self::MetrePerS => "m/s",
+            Self::Dba => "dB(A)",
+            Self::Fnu => "FNU",
+            Self::Ph => "pH",
+            Self::Millimetre => "mm",
         }
     }
 }
@@ -185,8 +429,75 @@ impl Quantity {
     }
 }
 
+impl Quantity {
+    /// Round to units of `10^exponent`, half to even: an explicit, visible rounding for
+    /// display or for a coarser register. Exact (no rounding) when `exponent` is not
+    /// coarser than the quantity's. `None` on overflow.
+    pub fn round(self, exponent: i8) -> Option<Self> {
+        if exponent <= self.exponent {
+            return Some(Self { mantissa: self.to_scale(exponent)?, exponent, unit: self.unit });
+        }
+        let diff = i32::from(exponent) - i32::from(self.exponent);
+        let p = 10i128.checked_pow(diff.unsigned_abs())?;
+        let q = self.mantissa.checked_div(p)?;
+        let r = self.mantissa.checked_rem(p)?;
+        let twice = r.unsigned_abs().checked_mul(2)?;
+        let half = p.unsigned_abs();
+        let away = twice > half || (twice == half && q % 2 != 0);
+        let mantissa = if away { q.checked_add(r.signum())? } else { q };
+        Some(Self { mantissa, exponent, unit: self.unit })
+    }
+
+    /// Rounded to at most `digits` significant digits (never more precise than it is).
+    pub fn significant(self, digits: u32) -> Option<Self> {
+        let len = self.mantissa.unsigned_abs().checked_ilog10().map_or(1, |l| l + 1);
+        if len <= digits {
+            return Some(self);
+        }
+        let shift = i8::try_from(len - digits).ok()?;
+        self.round(self.exponent.checked_add(shift)?)
+    }
+}
+
+impl Unit {
+    /// Units shown with an SI prefix (k, M, G, T) when large: energy and power.
+    const fn prefixable(self) -> bool {
+        matches!(
+            self,
+            Self::Wh
+                | Self::J
+                | Self::W
+                | Self::JPerH
+                | Self::VoltAmpere
+                | Self::Var
+                | Self::VaH
+                | Self::VarH
+                | Self::Calorie
+        )
+    }
+}
+
 impl fmt::Display for Quantity {
+    /// Exact decimal notation: `12.565 m³`. Energy and power of 1000 or more get an SI
+    /// prefix, still exact: `218.370 kWh`, `37.402 MWh`. The alternate form (`{:#}`)
+    /// keeps the base unit: `218370 Wh`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(unit) = self.unit.filter(|u| u.prefixable() && !f.alternate() && self.mantissa != 0) {
+            let len = self.mantissa.unsigned_abs().checked_ilog10().unwrap_or(0);
+            let magnitude = i32::try_from(len).unwrap_or(0) + i32::from(self.exponent);
+            let k = (magnitude / 3).clamp(0, 4);
+            if k > 0 {
+                let prefix =
+                    ["", "k", "M", "G", "T"].get(usize::try_from(k).unwrap_or(0)).copied().unwrap_or("");
+                let shift = i8::try_from(3 * k).unwrap_or(0);
+                let scaled = Self {
+                    mantissa: self.mantissa,
+                    exponent: self.exponent.saturating_sub(shift),
+                    unit: None,
+                };
+                return write!(f, "{scaled} {prefix}{unit}");
+            }
+        }
         let mut digits = [0u8; 40];
         let mut n = self.mantissa.unsigned_abs();
         let mut len = 0usize;
@@ -206,7 +517,9 @@ impl fmt::Display for Quantity {
         }
         let exp = i32::from(self.exponent);
         let put = |f: &mut fmt::Formatter<'_>, d: &u8| write!(f, "{}", char::from(*d));
-        if exp >= 0 {
+        if self.mantissa == 0 && exp >= 0 {
+            f.write_str("0")?;
+        } else if exp >= 0 {
             for d in digits.iter().rev() {
                 put(f, d)?;
             }
@@ -239,71 +552,6 @@ impl fmt::Display for Quantity {
     }
 }
 
-/// A date, data type G (EN 13757-3 Annex A).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Date {
-    /// Year (2000-based; 0–127 → 2000–2127).
-    pub year: u16,
-    /// Month, 1–12.
-    pub month: u8,
-    /// Day, 1–31.
-    pub day: u8,
-}
-
-impl Date {
-    pub(crate) fn from_type_g(b: &[u8]) -> Self {
-        let b0 = b.first().copied().unwrap_or(0);
-        let b1 = b.get(1).copied().unwrap_or(0);
-        let year = u16::from(((b0 & 0xE0) >> 5) | ((b1 & 0xF0) >> 1));
-        Self { year: 2000 + year, month: b1 & 0x0F, day: b0 & 0x1F }
-    }
-}
-
-impl fmt::Display for Date {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:04}-{:02}-{:02}", self.year, self.month, self.day)
-    }
-}
-
-/// A date and time, data type F (EN 13757-3 Annex A). Local time of the meter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DateTime {
-    /// The date.
-    pub date: Date,
-    /// Hour, 0–23.
-    pub hour: u8,
-    /// Minute, 0–59.
-    pub minute: u8,
-    /// The meter flags the time as invalid.
-    pub invalid: bool,
-    /// The meter flags the time as summer time.
-    pub summer_time: bool,
-}
-
-impl DateTime {
-    pub(crate) fn from_type_f(b: &[u8]) -> Self {
-        let g = |i: usize| b.get(i).copied().unwrap_or(0);
-        let (b0, b1, b2, b3) = (g(0), g(1), g(2), g(3));
-        Self {
-            date: Date::from_type_g(&[b2, b3]),
-            hour: b1 & 0x1F,
-            minute: b0 & 0x3F,
-            invalid: b0 & 0x80 != 0,
-            summer_time: b1 & 0x80 != 0,
-        }
-    }
-}
-
-impl fmt::Display for DateTime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {:02}:{:02}", self.date, self.hour, self.minute)?;
-        if self.invalid {
-            f.write_str(" (invalid)")?;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -327,19 +575,57 @@ mod tests {
     }
 
     #[test]
+    fn reals_are_exact_decimals() {
+        // baylanheat (wmbusmeters): 0x46529447 = 13477.0693359375 exactly.
+        assert_eq!(real32_exact(0x4652_9447), Some((134_770_693_359_375, -10)));
+        assert_eq!(real32_exact(0x3F80_0000), Some((1, 0)));
+        assert_eq!(real32_exact(0xC000_0000), Some((-2, 0)));
+        assert_eq!(real32_exact(0x0000_0000), Some((0, 0)));
+        assert_eq!(real32_exact(0x7F80_0000), None); // infinity
+        assert_eq!(real32_exact(0x7FC0_0000), None); // NaN
+        assert_eq!(real32_exact(0x0000_0001), None); // 2^-149: mantissa too long
+        assert_eq!(real32_exact(0x7F7F_FFFF), None); // 3.4e38 does not fit i128
+    }
+
+    #[test]
+    fn type_m_relative_durations() {
+        // wmbusmeters test_type_m (EN 13757-3:2018 Table A.12 examples) and OMS N.13.
+        let d = |b: &[u8]| type_m(b).map(|q| q.to_string());
+        assert_eq!(d(&[0x03, 0x30]).as_deref(), Some("3 s"));
+        assert_eq!(d(&[0x80, 0xDD, 0x50]).as_deref(), Some("-34.5 s"));
+        assert_eq!(d(&[0x0A, 0x10]).as_deref(), Some("20 s"));
+        assert_eq!(d(&[0x00, 0x40, 0x70]).as_deref(), Some("0.5 s"));
+        assert_eq!(d(&[0x03, 0xB0]).as_deref(), Some("3 s"));
+        assert_eq!(d(&[0x81, 0x30]).as_deref(), Some("-127 s"));
+        assert_eq!(d(&[0x80, 0x30]), None, "most negative count: invalid");
+        assert_eq!(d(&[0x0B, 0x60, 0x01, 0x00, 0x21]), None, "absolute form stays raw");
+    }
+
+    #[test]
+    fn rounding_is_explicit_and_half_even() {
+        let q = |m, e| Quantity { mantissa: m, exponent: e, unit: None };
+        assert_eq!(q(218_370, 0).round(3), Some(q(218, 3)));
+        assert_eq!(q(2_185, 0).round(1), Some(q(218, 1)));
+        assert_eq!(q(2_175, 0).round(1), Some(q(218, 1)));
+        assert_eq!(q(-2_185, 0).round(1), Some(q(-218, 1)));
+        assert_eq!(q(12, 0).round(-2), Some(q(1200, -2)));
+        assert_eq!(q(134_770_693_359_375, -10).significant(9).unwrap().to_string(), "13477.0693");
+    }
+
+    #[test]
     fn exact_display() {
         let q = |m, e| Quantity { mantissa: m, exponent: e, unit: Some(Unit::M3) }.to_string();
         assert_eq!(q(12565, -3), "12.565 m³");
         assert_eq!(q(21837, 1), "218370 m³");
         assert_eq!(q(5, -3), "0.005 m³");
-    }
-
-    #[test]
-    fn dates() {
-        // 2026-11-27: year 26 = 0b0011010 → b0 high bits 010, b1 high nibble 0011.
-        let d = Date::from_type_g(&[0b0101_1011, 0b0011_1011]);
-        assert_eq!(d.to_string(), "2026-11-27");
-        let t = DateTime::from_type_f(&[30, 14, 0b0101_1011, 0b0011_1011]);
-        assert_eq!(t.to_string(), "2026-11-27 14:30");
+        assert_eq!(q(0, 3), "0 m³");
+        assert_eq!(q(0, -2), "0.00 m³");
+        let e = |m, e| Quantity { mantissa: m, exponent: e, unit: Some(Unit::Wh) };
+        assert_eq!(e(218_370, 0).to_string(), "218.370 kWh");
+        assert_eq!(std::format!("{:#}", e(218_370, 0)), "218370 Wh");
+        assert_eq!(e(37_402, 3).to_string(), "37.402 MWh");
+        assert_eq!(e(999, 0).to_string(), "999 Wh");
+        assert_eq!(e(-1_364, 0).to_string(), "-1.364 kWh");
+        assert_eq!(e(0, 3).to_string(), "0 Wh");
     }
 }

@@ -1,0 +1,33 @@
+# libmbus test/test-frames/kamstrup_multical_601.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: kamstrup_multical_601.norm.xml
+68F7F768081172175885062D2C0804040000000C78175885060406E791000004142CDB00000422D90300000459B9270000045D081200000461B1150000042D5B010000142DC0010000043B1F020000143B74020000841006000000008420060000000084401400000000848040140000000084C0400600000000046D1A2F65114406518200004414B2C30000542D26020000543B03040000C4100600000000C4200600000000C4401400000000C480401400000000C4C0400600000000426C5F1C0F00000000E7E40000636600000000000000000000000000005BC9A50234530000E0B20300899C680000000000010001070709010300000000009816
+= wired C 08 address 17
+= meter KAM 06855817 heat (outlet) v8
+= not authenticated
+= fabrication number — 6855817
+= energy — 37.351 MWh
+= volume — 561.08 m³
+= on time — 985 h
+= flow temperature — 101.69 °C
+= return temperature — 46.16 °C
+= temperature difference — 55.53 K
+= power — 34.7 kW
+= power · maximum — 44.8 kW
+= volume flow — 0.543 m³/h
+= volume flow · maximum — 0.628 m³/h
+= energy · tariff 1 — 0 Wh
+= energy · tariff 2 — 0 Wh
+= volume · subunit 1 — 0.00 m³
+= volume · subunit 2 — 0.00 m³
+= energy · subunit 3 — 0 Wh
+= date and time — 2011-01-05 15:26
+= energy · storage 1 — 33.361 MWh
+= volume · storage 1 — 500.98 m³
+= power · maximum · storage 1 — 55.0 kW
+= volume flow · maximum · storage 1 — 1.027 m³/h
+= energy · storage 1 · tariff 1 — 0 Wh
+= energy · storage 1 · tariff 2 — 0 Wh
+= volume · storage 1 · subunit 1 — 0.00 m³
+= volume · storage 1 · subunit 2 — 0.00 m³
+= energy · storage 1 · subunit 3 — 0 Wh
+= date · storage 1 — 2010-12-31
+= manufacturer data 00 00 00 00 E7 E4 00 00 63 66 00 00 00 00 00 00 00 00 00 00 00 00 00 00 5B C9 A5 02 34 53 00 00 E0 B2 03 00 89 9C 68 00 00 00 00 00 01 00 01 07 07 09 01 03 00 00 00 00 00

@@ -1,0 +1,11 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.2.4 RSP-UD: https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+key 000102030405060708090A0B0C0D0E0F
+53082448443322110337D0468E80753A63665544330A31900F002C25E00AB30A0000AF5D74DF73A600D972785634C027129315330375002007109058475F4BC955CF1DF878B80A1B0F98B629024AAC7279429398BFC549233C0140829B93BAA1
+= wireless C 08 RAD 11223344 radio converter (meter side) v3
+= meter ELS 12345678 gas v51
+= authenticated
+= volume — 28504.27 m³
+= date and time — 2008-05-31 23:50
+= error flags — 0

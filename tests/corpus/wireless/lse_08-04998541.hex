@@ -1,0 +1,13 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver lse_08
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L1926
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"heat cost allocation","driver":"lse_08","name":"HCA2","id":"04998541","status":"TPL_STS_128","set_date":"2003-01-31","consumption_at_set_date_hca":321,"device_datetime":"2003-02-15 14:26","duration_since_readout_h":2.489167,"model_version":"01","timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+294465324185990401087A0080000082046C7F018B046E210300046D1A0E6F0202FDAC7E012301FD0C01
+= wireless C 44 LSE 04998541 heat cost allocator v1
+= not authenticated
+= date · storage 8 — 2003-01-31
+= heat cost allocation · storage 8 — 321
+= date and time — 2003-02-15 14:26
+= duration since last readout · future value — 8961 s
+= model version — 1

@@ -1,8 +1,12 @@
-//! CRC-16/EN-13757, the block checksum of wireless M-Bus (EN 13757-4).
+//! The CRCs of wireless M-Bus and its receiver sticks.
 //!
-//! Polynomial 0x3D65, initial value 0x0000, not reflected, final XOR 0xFFFF,
-//! transmitted most significant byte first. The standard check value over
-//! `"123456789"` is `0xC2B7`.
+//! [`crc16`] is CRC-16/EN-13757, the block checksum of wireless M-Bus (EN 13757-4):
+//! polynomial 0x3D65, initial value 0x0000, not reflected, final XOR 0xFFFF, transmitted
+//! most significant byte first; check value over `"123456789"` `0xC2B7`.
+//!
+//! [`crc16_x25`] is CRC-16/X-25 (IBM-SDLC), the frame check of the IMST sticks' host
+//! controller interfaces: reflected polynomial 0x8408, initial value 0xFFFF, final XOR
+//! 0xFFFF, transmitted least significant byte first; check value `0x906E`.
 
 const fn table() -> [u16; 256] {
     let mut t = [0u16; 256];
@@ -37,6 +41,18 @@ pub fn crc16(bytes: &[u8]) -> u16 {
     crc ^ 0xFFFF
 }
 
+/// The CRC-16/X-25 of `bytes` (bitwise: the stick frames are short).
+pub fn crc16_x25(bytes: &[u8]) -> u16 {
+    let mut crc = 0xFFFFu16;
+    for &b in bytes {
+        crc ^= u16::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0x8408 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,5 +60,6 @@ mod tests {
     #[test]
     fn standard_check_value() {
         assert_eq!(crc16(b"123456789"), 0xC2B7);
+        assert_eq!(crc16_x25(b"123456789"), 0x906E);
     }
 }

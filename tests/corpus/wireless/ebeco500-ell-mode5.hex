@@ -1,0 +1,13 @@
+# wmbusmeters tests/generated_tests.xmq#L553 @ cf4a01e; expected total_kwh 68.6, external_temperature_c 22.8, on_time_h 105.633333, meter_datetime 2000-02-01 13:54:50
+# licence: GPL-3.0; telegram bytes, key and expected values only
+# stripped (CRCs removed by the receiver)
+format stripped
+key FCC9B808216D9D1F5FF6E1A3CF7D3084
+31444514E301000001028C20807A2E002025E25DEA4F2BC8EC94920260443A95C2BF3856E3E380E889CC8233CA5D9771F289
+= wireless C 44 EBE 000001E3 electricity v1
+= decrypted, not authenticated
+= date and time — 2000-02-01 13:54:50
+= on time — 6338 min
+= energy — 68.6 kWh
+= external temperature — 22.8 °C
+= reactive power — 0 var

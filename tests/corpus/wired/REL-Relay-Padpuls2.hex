@@ -1,0 +1,12 @@
+# libmbus test/test-frames/REL-Relay-Padpuls2.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: REL-Relay-Padpuls2.norm.xml
+! invalid-time: the type F date-time has its IV bit set; fields decoded, flagged invalid (libmbus prints 1900-01-00).
+682F2F6808167201632111AC484103B10000000C1481608702046DA115E917426CDF1C4C148273590242EC7EFF1C0FC001010CBD16
+= wired C 08 address 22
+= meter REL 11216301 gas v65
+= not authenticated
+= volume — 28760.81 m³
+= date and time — 2015-07-09 21:33 (invalid)
+= date · storage 1 — 2014-12-31
+= volume · storage 1 — 25973.82 m³
+= date · future value · storage 1 — 2015-12-31
+= manufacturer data C0 01 01 0C

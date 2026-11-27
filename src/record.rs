@@ -8,15 +8,17 @@
 //! maximum, minimum, during error), bits 3–0 data field (length and coding).
 //! **DIFE**: bit 7 extension, bit 6 subunit, bits 5–4 tariff, bits 3–0 storage number.
 //! **VIF**: bit 7 extension, bits 6–0 what the value is and its decimal exponent
-//! (see [`Vib::describe`]).
+//! (see [`vif`](crate::vif)).
 //!
 //! Special DIFs: `2F` idle filler (skipped), `0F` manufacturer-specific data to the end,
 //! `1F` the same and more records follow in the next telegram.
 
-use crate::value::{self, Quantity, Unit, Value};
-use crate::{Error, Result};
+use core::fmt;
 
-const MAX_EXTENSIONS: usize = 10;
+use crate::time::{Date, DateTime, Time};
+use crate::value::{self, Quantity, Value};
+use crate::vif::{Description, Extension, Kind, MAX_EXTENSIONS, Modifier, RecordError, Vib};
+use crate::{Error, Result};
 
 /// The function field of a DIF.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +31,17 @@ pub enum Function {
     Minimum,
     /// Value during an error state.
     DuringError,
+}
+
+impl fmt::Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Instantaneous => "instantaneous",
+            Self::Maximum => "maximum",
+            Self::Minimum => "minimum",
+            Self::DuringError => "during error",
+        })
+    }
 }
 
 /// The data field of a DIF: how the value is coded.
@@ -49,7 +62,17 @@ pub enum DataField {
 }
 
 impl DataField {
-    const fn from_nibble(n: u8) -> Self {
+    /// The number of data bytes, `None` for variable length.
+    pub const fn size(self) -> Option<usize> {
+        match self {
+            Self::None | Self::Selection => Some(0),
+            Self::Int(n) | Self::Bcd(n) => Some(n as usize),
+            Self::Real32 => Some(4),
+            Self::Variable => None,
+        }
+    }
+
+    pub(crate) const fn from_nibble(n: u8) -> Self {
         match n & 0x0F {
             0x1 => Self::Int(1),
             0x2 => Self::Int(2),
@@ -71,6 +94,20 @@ impl DataField {
     }
 }
 
+/// The number of data bytes an LVAR byte announces (EN 13757-3 Table 6).
+pub(crate) fn lvar_len(lvar: u8) -> Result<usize> {
+    Ok(match lvar {
+        0x00..=0xBF => usize::from(lvar),
+        0xC0..=0xC9 => usize::from(lvar - 0xC0),
+        0xD0..=0xD9 => usize::from(lvar - 0xD0),
+        0xE0..=0xEF => usize::from(lvar - 0xE0),
+        0xF0..=0xF4 => 4 * usize::from(lvar - 0xEC),
+        0xF5 => 48,
+        0xF6 => 64,
+        other => return Err(Error::UnsupportedLvar(other)),
+    })
+}
+
 /// The data information block: what kind of value, which storage, tariff and subunit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dib {
@@ -88,102 +125,6 @@ pub struct Dib {
     pub subunit: u16,
 }
 
-/// The value information block: what the value is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Vib<'a> {
-    /// The VIF byte.
-    pub vif: u8,
-    vifes: [u8; MAX_EXTENSIONS],
-    vife_len: u8,
-    /// For a plain-text VIF (`7C`/`FC`): the unit text, as transmitted (reversed).
-    pub plain_text: Option<&'a [u8]>,
-}
-
-/// What a VIF says about a value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Description {
-    /// A physical quantity in `unit`, scaled by `10^exponent`.
-    Quantity {
-        /// What is measured.
-        name: &'static str,
-        /// The unit.
-        unit: Unit,
-        /// The decimal exponent.
-        exponent: i8,
-    },
-    /// A duration in `unit` (seconds, minutes, hours or days).
-    Duration {
-        /// What is measured.
-        name: &'static str,
-        /// The unit.
-        unit: Unit,
-    },
-    /// A date (type G).
-    Date,
-    /// A date and time (type F).
-    DateTime,
-    /// Something without a unit: fabrication number, identification, bus address,
-    /// heat cost allocator units.
-    Other(&'static str),
-    /// The unit is given as text (VIF `7C`).
-    PlainText,
-    /// An extension table (`FB`, `FD`): the meaning is in the first VIFE, which this
-    /// version does not interpret yet.
-    Extension(u8),
-    /// Manufacturer-specific (`7F`/`FF`) or any (`7E`/`FE`).
-    Manufacturer,
-}
-
-impl Vib<'_> {
-    /// The VIFE bytes.
-    pub fn vifes(&self) -> &[u8] {
-        self.vifes.get(..usize::from(self.vife_len)).unwrap_or(&[])
-    }
-
-    /// What the primary VIF says (EN 13757-3, Table 10). VIFEs that modify the meaning
-    /// are not applied yet; check [`Vib::vifes`] when exactness matters.
-    pub fn describe(&self) -> Description {
-        let v = self.vif & 0x7F;
-        let n = v & 0x07;
-        let nn = v & 0x03;
-        // `n` and `nn` are at most 7, so the subtractions stay in i8 range.
-        let e = |offset: i8| i8::try_from(n).unwrap_or(0) - offset;
-        let ee = |offset: i8| i8::try_from(nn).unwrap_or(0) - offset;
-        let duration = |name| Description::Duration { name, unit: Unit::duration(nn) };
-        let q = |name, unit, exponent| Description::Quantity { name, unit, exponent };
-        match v {
-            0x00..=0x07 => q("energy", Unit::Wh, e(3)),
-            0x08..=0x0F => q("energy", Unit::J, e(0)),
-            0x10..=0x17 => q("volume", Unit::M3, e(6)),
-            0x18..=0x1F => q("mass", Unit::Kg, e(3)),
-            0x20..=0x23 => duration("on time"),
-            0x24..=0x27 => duration("operating time"),
-            0x28..=0x2F => q("power", Unit::W, e(3)),
-            0x30..=0x37 => q("power", Unit::JPerH, e(0)),
-            0x38..=0x3F => q("volume flow", Unit::M3PerH, e(6)),
-            0x40..=0x47 => q("volume flow", Unit::M3PerMin, e(7)),
-            0x48..=0x4F => q("volume flow", Unit::M3PerS, e(9)),
-            0x50..=0x57 => q("mass flow", Unit::KgPerH, e(3)),
-            0x58..=0x5B => q("flow temperature", Unit::Celsius, ee(3)),
-            0x5C..=0x5F => q("return temperature", Unit::Celsius, ee(3)),
-            0x60..=0x63 => q("temperature difference", Unit::Kelvin, ee(3)),
-            0x64..=0x67 => q("external temperature", Unit::Celsius, ee(3)),
-            0x68..=0x6B => q("pressure", Unit::Bar, ee(3)),
-            0x6C => Description::Date,
-            0x6D => Description::DateTime,
-            0x6E => Description::Other("units for heat cost allocator"),
-            0x70..=0x73 => duration("averaging duration"),
-            0x74..=0x77 => duration("actuality duration"),
-            0x78 => Description::Other("fabrication number"),
-            0x79 => Description::Other("identification"),
-            0x7A => Description::Other("bus address"),
-            0x7C => Description::PlainText,
-            0x7B | 0x7D => Description::Extension(self.vif),
-            _ => Description::Manufacturer,
-        }
-    }
-}
-
 /// One data record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Record<'a> {
@@ -193,34 +134,133 @@ pub struct Record<'a> {
     pub vib: Vib<'a>,
     /// The value.
     pub value: Value<'a>,
+    /// Whether every byte of this record came out of decryption. `false` for plaintext
+    /// telegrams and for the unencrypted tail after a partially encrypted mode-5/7
+    /// payload, which nothing protects. Decryption is confidentiality, not integrity:
+    /// see [`Authenticity::Encrypted`](crate::app::Authenticity::Encrypted).
+    pub from_ciphertext: bool,
+    /// The DIF … VIFE bytes as transmitted (`None` with a plain-text unit).
+    pub header: Option<&'a [u8]>,
 }
 
 impl Record<'_> {
-    /// The value as an exact [`Quantity`] with unit and exponent, when the VIF describes
-    /// a physical quantity or duration and the value is an integer or valid BCD.
-    pub fn quantity(&self) -> Option<Quantity> {
-        let mantissa = self.value.as_integer()?;
-        match self.vib.describe() {
-            Description::Quantity { unit, exponent, .. } => {
-                Some(Quantity { mantissa, exponent, unit: Some(unit) })
-            }
-            Description::Duration { unit, .. } => Some(Quantity { mantissa, exponent: 0, unit: Some(unit) }),
+    /// What the value is: kind, unit and exponent (see [`Vib::description`]).
+    pub fn description(&self) -> Description {
+        self.vib.description()
+    }
+
+    /// The compact profile this record carries (VIFE `1F`, `13` or `1E` and an LVAR
+    /// payload), if it is one. Its base value is the record with the same storage,
+    /// tariff, subunit and VIF without the profile VIFE.
+    pub fn profile(&self) -> Option<crate::profile::Profile<'_>> {
+        let direction = self.vib.modifiers().find_map(|m| match m {
+            Modifier::CompactProfile(d) => Some(d),
+            _ => None,
+        })?;
+        match self.value {
+            Value::Text(b) | Value::Bytes(b) => crate::profile::Profile::parse(direction, b),
             _ => None,
         }
     }
 
-    /// A short name for what the record measures.
+    /// A short English name for what the record measures, e.g. `"volume flow"`.
     pub fn name(&self) -> &'static str {
-        match self.vib.describe() {
-            Description::Quantity { name, .. }
-            | Description::Duration { name, .. }
-            | Description::Other(name) => name,
-            Description::Date => "date",
-            Description::DateTime => "date and time",
-            Description::PlainText => "plain-text unit",
-            Description::Extension(_) => "extension VIF",
-            Description::Manufacturer => "manufacturer specific",
+        self.vib.description().kind.name()
+    }
+
+    /// The value as an exact [`Quantity`], with every multiplicative correction VIFE
+    /// applied.
+    ///
+    /// `None` when the value is not an integer or valid BCD, when the description has
+    /// no unit (identifiers, counters, dates), when a combinable VIFE changes the unit
+    /// or meaning in a way this crate does not model ("per hour", "date of", "number
+    /// of exceeds", additive offset, error, manufacturer-specific, reserved; see
+    /// [`Modifier::keeps_quantity`]), or when the corrected exponent overflows. Never a
+    /// value off by a correction factor (001-describe-every-record/SR-001).
+    pub fn quantity(&self) -> Option<Quantity> {
+        if let Value::Duration(q) = self.value {
+            return Some(q);
         }
+        let (mantissa, base) = self.value.as_decimal()?;
+        let d = self.vib.description();
+        // A plain-text unit is a quantity without a `Unit`: the text is the unit.
+        let unit = match d.kind {
+            Kind::PlainText => None,
+            _ => Some(d.unit?),
+        };
+        let mut exponent = d.exponent.checked_add(base)?;
+        for m in self.vib.modifiers() {
+            match m {
+                Modifier::Scale(e) => exponent = exponent.checked_add(e)?,
+                m if m.keeps_quantity() => {}
+                _ => return None,
+            }
+        }
+        Some(Quantity { mantissa, exponent, unit })
+    }
+}
+
+impl fmt::Display for Record<'_> {
+    /// One line: `name · modifiers · function · storage · tariff · subunit — value`.
+    /// Defaults (instantaneous, storage 0, tariff 0, subunit 0) are left out.
+    ///
+    /// ```
+    /// # use mbus_kit::Records;
+    /// let r = Records::new(&[0xDA, 0x02, 0x3B, 0x13, 0x01]).next().unwrap().unwrap();
+    /// assert_eq!(r.to_string(), "volume flow · maximum · storage 5 — 0.113 m³/h");
+    /// ```
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let d = self.vib.description();
+        match (d.kind, self.vib.plain_text()) {
+            // "value — 54.10 %RH"; with an unmodelled modifier "value in igal · per hour".
+            (Kind::PlainText, Some(unit)) if self.quantity().is_none() => {
+                f.write_str("value in ")?;
+                value::escaped(f, unit.iter().rev())?;
+            }
+            (Kind::PlainText, Some(_)) => f.write_str("value")?,
+            (kind, _) => write!(f, "{kind}")?,
+        }
+        // Applied corrections are in the value; "no error" says nothing.
+        let shown = |m: &Modifier| !matches!(m, Modifier::Scale(_) | Modifier::Error(RecordError(0)));
+        for m in self.vib.modifiers().filter(shown) {
+            write!(f, " · {m}")?;
+        }
+        let dib = &self.dib;
+        if dib.function != Function::Instantaneous {
+            write!(f, " · {}", dib.function)?;
+        }
+        if dib.storage != 0 {
+            write!(f, " · storage {}", dib.storage)?;
+        }
+        if dib.tariff != 0 {
+            write!(f, " · tariff {}", dib.tariff)?;
+        }
+        if dib.subunit != 0 {
+            write!(f, " · subunit {}", dib.subunit)?;
+        }
+        f.write_str(" — ")?;
+        match (self.quantity(), self.value) {
+            // A real is exact but long: show 9 significant digits, marked as rounded.
+            (Some(q), Value::Real32(_)) => match q.significant(9) {
+                Some(r) if r != q => write!(f, "≈ {r}")?,
+                _ => write!(f, "{q}")?,
+            },
+            // Type M, relative: a time point given as an offset back from reception (OMS
+            // Annex N N.13: "RX timestamp − 3 s").
+            (Some(q), Value::Duration(_)) => write!(f, "{q} before reception")?,
+            (Some(q), _) => write!(f, "{q}")?,
+            (None, _) if self.profile().is_some() => {
+                if let Some(p) = self.profile() {
+                    write!(f, "{p}")?;
+                }
+            }
+            (None, value) => write!(f, "{value}")?,
+        }
+        if let (Some(_), Some(text)) = (self.quantity().filter(|q| q.unit.is_none()), self.vib.plain_text()) {
+            f.write_str(" ")?;
+            value::escaped(f, text.iter().rev())?;
+        }
+        Ok(())
     }
 }
 
@@ -235,12 +275,18 @@ pub struct Records<'a> {
     done: bool,
     manufacturer: Option<&'a [u8]>,
     more_follows: bool,
+    ciphertext_end: usize,
 }
 
 impl<'a> Records<'a> {
     /// Records in `buf` (the bytes after the data header).
     pub const fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0, done: false, manufacturer: None, more_follows: false }
+        Self { buf, pos: 0, done: false, manufacturer: None, more_follows: false, ciphertext_end: 0 }
+    }
+
+    /// Records whose first `ciphertext_end` bytes were decrypted.
+    pub(crate) const fn decrypted(buf: &'a [u8], ciphertext_end: usize) -> Self {
+        Self { buf, pos: 0, done: false, manufacturer: None, more_follows: false, ciphertext_end }
     }
 
     /// Manufacturer-specific bytes after a `0F`/`1F` DIF, once iteration has reached them.
@@ -267,6 +313,7 @@ impl<'a> Records<'a> {
     }
 
     fn record(&mut self, dif: u8) -> Result<Record<'a>> {
+        let header_start = self.pos.saturating_sub(1);
         let function = match (dif >> 4) & 0x03 {
             0 => Function::Instantaneous,
             1 => Function::Maximum,
@@ -292,7 +339,28 @@ impl<'a> Records<'a> {
         let data = DataField::from_nibble(dif);
         let dib = Dib { dif, function, data, storage, tariff, subunit };
 
+        // A plain-text VIF `FC` puts its text after the VIFE chain (EN 13757-3:2018
+        // Table C.2); some meters (Elvaco CMa10) put it straight after the VIF. Try the
+        // standard first, the deviation if the standard does not parse.
+        let start = self.pos;
+        match self.value_part(dib, false, header_start) {
+            Err(e) if self.buf.get(start) == Some(&0xFC) => {
+                self.pos = start;
+                self.value_part(dib, true, header_start).map_err(|_| e)
+            }
+            r => r,
+        }
+    }
+
+    fn plain_text(&mut self) -> Result<&'a [u8]> {
+        let n = self.byte()?;
+        self.take(usize::from(n))
+    }
+
+    fn value_part(&mut self, dib: Dib, text_first: bool, header_start: usize) -> Result<Record<'a>> {
+        let data = dib.data;
         let vif = self.byte()?;
+        let mut plain_text = if text_first { Some(self.plain_text()?) } else { None };
         let mut vifes = [0u8; MAX_EXTENSIONS];
         let mut vife_len = 0u8;
         let mut ext = vif & 0x80 != 0;
@@ -302,24 +370,29 @@ impl<'a> Records<'a> {
             vife_len += 1;
             ext = vife & 0x80 != 0;
         }
-        let plain_text = if vif & 0x7F == 0x7C {
-            let n = self.byte()?;
-            Some(self.take(usize::from(n))?)
-        } else {
-            None
-        };
-        let vib = Vib { vif, vifes, vife_len, plain_text };
+        // DIF … VIFE: the layout a compact frame refers to (none with a plain-text unit).
+        let header = (vif & 0x7F != 0x7C).then(|| self.buf.get(header_start..self.pos)).flatten();
+        if vif & 0x7F == 0x7C && plain_text.is_none() {
+            plain_text = Some(self.plain_text()?);
+        }
+        let vib = Vib::new(vif, vifes, vife_len, plain_text);
+        let time_point =
+            vib.description().kind.is_time_point() || vib.modifiers().any(Modifier::is_time_point);
+        let unsigned = vib.modifiers().any(|m| m == Modifier::Extension(Extension::Unsigned));
 
         let value = match data {
             DataField::None | DataField::Selection => Value::None,
             DataField::Int(n) => {
                 let bytes = self.take(usize::from(n))?;
-                if vif & 0x7F == 0x6C && n == 2 {
-                    Value::Date(value::Date::from_type_g(bytes))
-                } else if vif & 0x7F == 0x6D && n == 4 {
-                    Value::DateTime(value::DateTime::from_type_f(bytes))
-                } else {
-                    Value::Int(value::le_signed(bytes))
+                match (time_point, bytes) {
+                    (true, &[b0, b1]) => Value::Date(Date::from_type_g(b0, b1)),
+                    (true, &[b0, b1, b2]) => Value::Time(Time::from_type_j(b0, b1, b2)),
+                    (true, &[b0, b1, b2, b3]) => Value::DateTime(DateTime::from_type_f([b0, b1, b2, b3])),
+                    (true, &[b0, b1, b2, b3, b4, b5]) => {
+                        Value::DateTime(DateTime::from_type_i([b0, b1, b2, b3, b4, b5]))
+                    }
+                    _ if unsigned => Value::UInt(value::le_unsigned(bytes)),
+                    _ => Value::Int(value::le_signed(bytes)),
                 }
             }
             DataField::Real32 => {
@@ -335,17 +408,24 @@ impl<'a> Records<'a> {
                     0xD0..=0xD9 => value::bcd(self.take(usize::from(lvar - 0xD0))?).negate(),
                     0xE0..=0xEF => {
                         let bytes = self.take(usize::from(lvar - 0xE0))?;
-                        if bytes.len() <= 8 {
+                        if let Some(d) = time_point.then(|| value::type_m(bytes)).flatten() {
+                            Value::Duration(d)
+                        } else if bytes.len() <= 8 {
                             Value::Int(value::le_signed(bytes))
                         } else {
                             Value::Bytes(bytes)
                         }
                     }
+                    // Binary numbers of 16, 20, 24, 28, 32 (4 × (LVAR − EC)), 48 and 64 bytes
+                    // (EN 13757-3:2018 as read by libmbus and wmbusmeters).
+                    0xF0..=0xF4 => Value::Bytes(self.take(4 * usize::from(lvar - 0xEC))?),
+                    0xF5 => Value::Bytes(self.take(48)?),
+                    0xF6 => Value::Bytes(self.take(64)?),
                     other => return Err(Error::UnsupportedLvar(other)),
                 }
             }
         };
-        Ok(Record { dib, vib, value })
+        Ok(Record { dib, vib, value, from_ciphertext: false, header })
     }
 }
 
@@ -373,7 +453,10 @@ impl<'a> Iterator for Records<'a> {
                     return Some(Err(Error::ReservedDif(d)));
                 }
                 d => {
-                    let r = self.record(d);
+                    let r = self.record(d).map(|mut r| {
+                        r.from_ciphertext = self.pos <= self.ciphertext_end;
+                        r
+                    });
                     self.done = r.is_err();
                     return Some(r);
                 }
@@ -385,7 +468,9 @@ impl<'a> Iterator for Records<'a> {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::*;
+    use std::string::ToString;
 
     #[test]
     fn storage_tariff_and_subunit_from_extensions() {
@@ -405,8 +490,9 @@ mod tests {
     fn filler_and_manufacturer_data() {
         let mut r = Records::new(&[0x2F, 0x2F, 0x01, 0xFD, 0x08, 0x05, 0x0F, 0xAA, 0xBB]);
         let rec = r.next().unwrap().unwrap();
-        assert_eq!(rec.vib.vif, 0xFD);
+        assert_eq!(rec.vib.vif(), 0xFD);
         assert_eq!(rec.vib.vifes(), &[0x08]);
+        assert_eq!(rec.name(), "access number");
         assert_eq!(rec.value, Value::Int(5));
         assert!(r.next().is_none());
         assert_eq!(r.manufacturer_data(), Some(&[0xAA, 0xBB][..]));
@@ -417,8 +503,28 @@ mod tests {
     fn plain_text_vif() {
         // 01 FC 03? no: VIF 7C, then length 3, then "hPa" reversed, then 1-byte int.
         let rec = Records::new(&[0x01, 0x7C, 0x03, b'a', b'P', b'h', 0x2A]).next().unwrap().unwrap();
-        assert_eq!(rec.vib.plain_text, Some(&b"aPh"[..]));
+        assert_eq!(rec.vib.plain_text(), Some(&b"aPh"[..]));
+        assert_eq!(rec.to_string(), "value — 42 hPa");
         assert_eq!(rec.value, Value::Int(42));
+    }
+
+    #[test]
+    fn plain_text_after_vifes_and_the_elvaco_deviation() {
+        // EN 13757-3:2018 Table C.2: 0C FC A2 73 04 "lagi" 26 08 42 75 = 75420.826 igal/h.
+        let rec =
+            Records::new(&[0x0C, 0xFC, 0xA2, 0x73, 0x04, b'l', b'a', b'g', b'i', 0x26, 0x08, 0x42, 0x75])
+                .next()
+                .unwrap()
+                .unwrap();
+        assert_eq!(rec.vib.plain_text(), Some(&b"lagi"[..]));
+        assert_eq!(rec.value, Value::Bcd(75_420_826));
+        assert_eq!(rec.to_string(), "value in igal · per hour — 75420826");
+        // Elvaco CMa10 (libmbus test frame): 02 FC 03 "HR%" 74 22 15 = 54.10 %RH.
+        let rec =
+            Records::new(&[0x02, 0xFC, 0x03, b'H', b'R', b'%', 0x74, 0x22, 0x15]).next().unwrap().unwrap();
+        assert_eq!(rec.vib.plain_text(), Some(&b"HR%"[..]));
+        assert_eq!(rec.vib.vifes(), &[0x74]);
+        assert_eq!(rec.value, Value::Int(0x1522));
     }
 
     #[test]

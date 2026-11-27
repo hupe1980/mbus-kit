@@ -1,0 +1,24 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver gransystems
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L846
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"electricity","driver":"gransystems","name":"Gran101","id":"18046178","status":"OK","info":"SINGLE_PHASE_METER","total_energy_consumption_kwh":0.916,"total_energy_consumption_tariff_4_kwh":0,"total_energy_consumption_tariff_2_kwh":0.043,"total_energy_consumption_tariff_3_kwh":0,"total_energy_consumption_tariff_1_kwh":0.873,"target_datetime":"2021-01-28 00:00","target_energy_consumption_kwh":0.916,"target_energy_consumption_tariff_2_kwh":0.043,"target_energy_consumption_tariff_4_kwh":0,"target_energy_consumption_tariff_3_kwh":0,"target_energy_consumption_tariff_1_kwh":0.873,"device_datetime":"2021-01-28 19:15","voltage_at_phase_1_v":235,"current_at_phase_1_a":0,"frequency_hz":49.98,"timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+7844731E78610418010278046D0F13BC21040394030000841003690300008420032B00000084300300000000848010030000000084016D0000BC2184010394030000841103690300008421032B00000084310300000000848110030000000004FD482E09000004FD5B0000000002FB2D861304FD1700000201
+= wireless C 44 GSS 18046178 electricity v1
+= not authenticated
+= date and time — 2021-01-28 19:15
+= energy — 916 Wh
+= energy · tariff 1 — 873 Wh
+= energy · tariff 2 — 43 Wh
+= energy · tariff 3 — 0 Wh
+= energy · tariff 4 — 0 Wh
+= date and time · storage 2 — 2021-01-28 00:00
+= energy · storage 2 — 916 Wh
+= energy · storage 2 · tariff 1 — 873 Wh
+= energy · storage 2 · tariff 2 — 43 Wh
+= energy · storage 2 · tariff 3 — 0 Wh
+= energy · storage 2 · tariff 4 — 0 Wh
+= voltage — 235.0 V
+= current — 0.0 A
+= frequency — 49.98 Hz
+= error flags — 16908288

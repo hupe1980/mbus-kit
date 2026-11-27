@@ -1,0 +1,10 @@
+# OMS Specification Vol. 2 Annex N, Release E (2023-12), N.9 RSP-UD HCA: https://oms-group.org/wp-content/uploads/2024/10/Open-Metering-System-Specification_Annex-N.pdf
+# format A with link-layer CRCs, as printed in the specification
+format a
+key 000102030405060708090A0B0C0D0E0F
+21086850785634128F08E4F88C80157A02001005FD26EF68ACF65BAE39F9028BFDC188D8A972D8DC
+= wireless C 08 TCH 12345678 heat cost allocator v143
+= decrypted, not authenticated
+= heat cost allocation — 12345
+= date · storage 1 — 2009-12-31
+= heat cost allocation · storage 1 — 23456

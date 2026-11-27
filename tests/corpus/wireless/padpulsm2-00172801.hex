@@ -1,0 +1,10 @@
+# wmbusmeters tests/generated_tests.xmq @ cf4a01e (GPL-3.0; telegram bytes and expected values only, no code); driver padpulsm2
+# https://github.com/wmbusmeters/wmbusmeters/blob/cf4a01ead82cc38537aef76df450bcccb6d8c793/tests/generated_tests.xmq#L2167
+# stripped (CRCs removed by the receiver)
+# expected (wmbusmeters JSON): {"_":"telegram","media":"gas","driver":"padpulsm2","name":"Pulses","id":"00172801","total_kwh":0,"status":"OK","timestamp":"1111-11-11T11:11:11Z"}
+format stripped
+2644AC482817000050377201281700AC485003870000002F2F0C01000000002F2F2F2F2F2F2F2F
+= wireless C 44 REL 00001728 radio converter (meter side) v80
+= meter REL 00172801 gas v80
+= not authenticated
+= energy — 0.00 Wh

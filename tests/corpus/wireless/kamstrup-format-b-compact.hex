@@ -1,0 +1,10 @@
+# wmbusmeters src/testinternals.cc test_compact_crc() @ cf4a01e (GPL-3.0; telegram bytes only)
+# The one public frame-format-B frame with its link-layer CRC: L counts the CRC, one CRC
+# at the end over L..end-2 (D-006). ELL 8D without encryption, payload CRC 0x8009; then a
+# compact frame (CI 79).
+! compact-frame: CI 79 (format signature A9F3); its layout comes from an earlier full frame, see tests/compact.rs, which expands it (volume 2.311 m³).
+format b
+3644372C235708273C068D20AF00000000098079F3A9A73B000000000709000018080000413B00002E000000FFFFFFFFFFFF1F2616BF70
+= wireless C 44 KAW 27085723 warm water v60
+= not authenticated
+= compact frame, signature A9F3, 29 data bytes

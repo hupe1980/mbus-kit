@@ -135,6 +135,46 @@ impl<'a> Frame<'a> {
     }
 }
 
+/// What [`scan`] found in a receive buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scan<'a> {
+    /// A valid frame starting `skip` bytes into the buffer and using `len` bytes. Drop
+    /// `skip + len` bytes before scanning again.
+    Frame {
+        /// The frame.
+        frame: Frame<'a>,
+        /// Bytes of noise before it.
+        skip: usize,
+        /// Bytes the frame uses.
+        len: usize,
+    },
+    /// No complete frame yet: drop `skip` bytes of noise, keep the rest, read more.
+    NeedMore {
+        /// Bytes that cannot start a frame and can be dropped.
+        skip: usize,
+    },
+}
+
+/// Find the first valid frame in a receive buffer that may begin with noise, an echo or
+/// the tail of a broken frame (what a level converter delivers on a real bus).
+///
+/// Every byte that cannot start a valid frame is skipped. The first start byte whose frame
+/// is still incomplete wins: the rest may be arriving, and its data can contain bytes that
+/// look like a frame of their own (an `E5`, a `10 … 16`). A stray start byte in front of a
+/// reply is resolved as soon as enough bytes arrive to show its frame is invalid (wrong
+/// length bytes, checksum or stop byte). Checksums are verified for every frame.
+pub fn scan(buf: &[u8]) -> Scan<'_> {
+    for start in 0..buf.len() {
+        let Some(rest) = buf.get(start..) else { break };
+        match Frame::parse(rest) {
+            Ok(Some((frame, len))) => return Scan::Frame { frame, skip: start, len },
+            Ok(None) => return Scan::NeedMore { skip: start },
+            Err(_) => {}
+        }
+    }
+    Scan::NeedMore { skip: buf.len() }
+}
+
 fn check(computed: u8, found: u8, stop: u8) -> Result<()> {
     if computed != found {
         return Err(Error::Checksum { computed, found });
@@ -176,6 +216,35 @@ mod tests {
             assert_eq!(Frame::parse(&out[..cut]).unwrap(), None, "cut at {cut}");
         }
         assert!(Frame::parse(&out[..n]).unwrap().is_some());
+    }
+
+    #[test]
+    fn scan_skips_noise_and_false_starts() {
+        let mut buf = [0u8; 32];
+        let n = req_ud2(5, true).encode(&mut buf[3..]).unwrap();
+        buf[..3].copy_from_slice(&[0x00, 0x68, 0x42]); // noise, a false long-frame start
+        let all = &buf[..3 + n];
+        assert_eq!(scan(all), Scan::Frame { frame: req_ud2(5, true), skip: 3, len: 5 });
+        // Incomplete: keep from the first plausible start (68 42 10 7B is no header).
+        assert_eq!(scan(&all[..3 + 3]), Scan::NeedMore { skip: 3 });
+        assert_eq!(scan(&[0x00, 0x68, 0x05]), Scan::NeedMore { skip: 1 });
+        assert_eq!(scan(&[0x00, 0x01, 0x02]), Scan::NeedMore { skip: 3 });
+        assert_eq!(scan(&[]), Scan::NeedMore { skip: 0 });
+        // An ACK after an echo of our own request.
+        let mut echo = [0u8; 6];
+        echo[..5].copy_from_slice(&all[3..]);
+        echo[5] = ACK;
+        assert_eq!(scan(&echo), Scan::Frame { frame: req_ud2(5, true), skip: 0, len: 5 });
+        // A long frame still arriving whose data holds an E5: wait, never an ACK (review
+        // 2026-11-27: the readout ended with no telegram).
+        let mut long = [0u8; 64];
+        let data =
+            [0x78, 0x56, 0x34, 0x12, 0x24, 0x40, 0x01, 0x07, 0x55, 0, 0, 0, 0x03, 0x13, 0xE5, 0x31, 0x00];
+        let n = Frame::Long { c: 0x08, a: 5, ci: 0x72, data: &data }.encode(&mut long).unwrap();
+        for cut in 1..n {
+            assert_eq!(scan(&long[..cut]), Scan::NeedMore { skip: 0 }, "cut {cut}");
+        }
+        assert!(matches!(scan(&long[..n]), Scan::Frame { skip: 0, .. }));
     }
 
     #[test]

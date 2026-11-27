@@ -1,12 +1,25 @@
+# Every gate a change must pass, the same as `just ci` locally. Nothing here deploys or
+# publishes: see site.yml (GitHub Pages) and release.yml (tags).
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Read-only token: CI checks, it never writes.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes the running checks.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -16,51 +29,69 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, "1.85"]
+        rust: [stable, "1.85"] # 1.85 = rust-version in Cargo.toml
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features
-      - run: cargo test --no-default-features --lib
-      - name: the example runs, not only compiles
-        run: cargo run --example readout
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo test --all-features --locked
+      - run: cargo test --no-default-features --lib --locked
+      - name: the examples and the tool run, not only compile
+        run: |
+          set -euo pipefail
+          cargo run --locked --example readout
+          cargo run --locked --example master
+          mbus() { cargo run -q --locked --features cli --bin mbus -- "$@"; }
+          mbus decode tests/corpus/wireless/oms-n2.1-mode5.hex --key 0102030405060708090A0B0C0D0E0F11
+          mbus decode tests/corpus/wireless/oms-n13-mode7-profile.hex --json | python3 -m json.tool > /dev/null
 
   # The claim that matters for firmware: the core builds with no allocator and no std.
   no_std:
     name: no_std (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         target: [thumbv7em-none-eabihf, riscv32imac-unknown-none-elf, wasm32-unknown-unknown]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --target ${{ matrix.target }} --no-default-features
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo build --locked --target ${{ matrix.target }} --no-default-features
+      - name: with OMS security
+        run: cargo build --locked --target ${{ matrix.target }} --no-default-features --features oms
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --all-features
+      - run: cargo clippy --locked --all-targets --all-features
 
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --all-features --no-deps
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # As docs.rs builds it: every feature, with the `doc(cfg)` badges.
+      - run: cargo doc --locked --all-features --no-deps
         env:
           RUSTDOCFLAGS: -D warnings --cfg docsrs
 
@@ -71,48 +102,66 @@ jobs:
   panic_free:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: thumbv7em-none-eabihf
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      # With `oms`, mbus-kit's own code must stay panic-free too. (The `aes` crate's soft
+      # key schedule keeps unreachable bounds checks of its own; see the embedded page.)
       - name: scan for panic symbols
         run: |
           set -euo pipefail
-          CARGO_PROFILE_RELEASE_LTO=false cargo build --release --target thumbv7em-none-eabihf --no-default-features
-          lib=$(find target/thumbv7em-none-eabihf/release -name 'libmbus_kit*.rlib' | head -1)
-          file "$lib" | grep -q 'ar archive' || { echo "::error::$lib is not object code"; exit 1; }
-          if nm "$lib" 2>/dev/null | grep -E 'core[0-9]+panicking|panic_fmt'; then
-            echo "::error::a panic path is reachable from the library"; exit 1
-          fi
-
-  fuzz:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-fuzz --locked
-      - name: fuzz every decoder briefly
-        run: |
-          for t in wired wireless records; do
-            cargo fuzz run "$t" -- -max_total_time=60 -timeout=20 -rss_limit_mb=4096
+          for oms in false true; do
+            features=()
+            if $oms; then features=(--features oms); fi
+            rm -f target/thumbv7em-none-eabihf/release/libmbus_kit.rlib
+            CARGO_PROFILE_RELEASE_LTO=false cargo build --locked --release --target thumbv7em-none-eabihf --no-default-features "${features[@]}"
+            lib=target/thumbv7em-none-eabihf/release/libmbus_kit.rlib
+            file "$lib" | grep -q 'ar archive' || { echo "::error::$lib is not object code"; exit 1; }
+            if nm "$lib" 2>/dev/null | grep -iE 'panicking|panic_fmt|panic_bounds'; then
+              echo "::error::a panic path is reachable from the library (oms: $oms)"; exit 1
+            fi
           done
 
+  # Constitution I: every decoder of untrusted bytes is fuzzed. One minute each, so a
+  # change that adds a crash is caught; long campaigns run locally (`just fuzz 3600`).
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wired, wireless, records, oms, master, fragment, stick, serial, json]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6a52aad76a94a5fbc50d567bb5be24419801c1fb # nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@073e1fd0bc889c9aee68dbaaa927cde1b5653a83 # v2
+        with:
+          tool: cargo-fuzz
+      - run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60 -timeout=20 -rss_limit_mb=4096
+      - name: keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+
+  # Licences, advisories, duplicate and unknown-source crates (deny.toml).
   deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
-  site:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: install zola
-        run: |
-          set -euo pipefail
-          VERSION=0.23.4
-          curl -sSfL "https://github.com/getzola/zola/releases/download/v${VERSION}/zola-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /usr/local/bin zola
-      - run: zola --root site build
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@bb119f768ea239e765aeaef5769558d4f21213aa # v2
+        with:
+          arguments: --all-features

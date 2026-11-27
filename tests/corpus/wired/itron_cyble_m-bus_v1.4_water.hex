@@ -1,0 +1,14 @@
+# libmbus test/test-frames/itron_cyble_m-bus_v1.4_water.hex @ 9435271 (BSD-3-Clause, Copyright (c) 2010-2012 Raditex Control AB); expected values: itron_cyble_m-bus_v1.4_water.norm.xml
+! manufacturer-vife: the second volume carries VIFE 7F (manufacturer specific). No quantity; libmbus prints 0.2 m³.
+6856566808017271000012770414070A3000000C78710000120D7C084449202E747375630A454C4259432054534554046D2B0D9811027C09656D6974202E746162F21004143D30000004947F140000004414000000000F10011F2F16
+= wired C 08 address 1
+= meter ACW 12000071 water v20
+= not authenticated
+= fabrication number — 12000071
+= value in cust. ID — TEST CYBLE
+= date and time — 2012-01-24 13:43
+= value — 4338 bat. time
+= volume — 123.49 m³
+= volume · manufacturer specific — 20
+= volume · storage 1 — 0.00 m³
+= manufacturer data 10 01 1F

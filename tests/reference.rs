@@ -23,10 +23,10 @@ const TELEGRAM: [u8; 37] = [
 
 fn check_application(app: &Application<'_>) {
     let Header::Long(h) = app.header else { panic!("expected a long header") };
-    assert_eq!(h.id_number(), Some(12_345_678));
-    assert_eq!(h.manufacturer.to_string(), "PAD");
-    assert_eq!(h.version, 1);
-    assert_eq!(h.medium, Medium::WATER);
+    assert_eq!(h.address.id_number(), Some(12_345_678));
+    assert_eq!(h.address.manufacturer.to_string(), "PAD");
+    assert_eq!(h.address.version, 1);
+    assert_eq!(h.address.medium, Medium::WATER);
     assert_eq!(h.short.access_number, 0x55);
     assert_eq!(h.short.security().mode, 0);
 
@@ -48,7 +48,8 @@ fn check_application(app: &Application<'_>) {
     assert_eq!((energy.dib.tariff, energy.dib.subunit), (2, 1));
     let q = energy.quantity().unwrap();
     assert_eq!(q.unit, Some(Unit::Wh));
-    assert_eq!(q.to_string(), "218370 Wh");
+    assert_eq!(q.to_string(), "218.37 kWh");
+    assert_eq!(format!("{q:#}"), "218370 Wh");
     assert_eq!(q.to_scale(3), None, "218370 Wh is not a whole number of kWh");
     assert_eq!(q.to_scale(0), Some(218_370));
 }
