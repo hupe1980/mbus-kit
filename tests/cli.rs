@@ -167,3 +167,26 @@ fn decode_streams_line_by_line() {
     drop(stdin);
     assert!(child.wait().unwrap().success());
 }
+
+#[test]
+fn a_reader_that_stops_early_is_no_error() {
+    // `mbus decode … | head -1`: the pipe closes, the tool ends quietly.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mbus"))
+        .arg("decode")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let mut stdin = child.stdin.take().unwrap();
+    for _ in 0..1000 {
+        if stdin.write_all(b"68 03 03 68 08 01 78 81 16\n").is_err() {
+            break;
+        }
+    }
+    drop(stdin);
+    let o = child.wait_with_output().unwrap();
+    assert!(o.status.success(), "{o:?}");
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("panicked"));
+}

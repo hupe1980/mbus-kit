@@ -42,6 +42,8 @@ A wired readout no longer hands over data it cannot vouch for.
   a converter's echo behind noise, scales the end-of-reply gap with the baud rate, and
   accepts an `E5` with noise around it in `command`.
 - `Readout::timeout` after the end no longer answers `Retrying`.
+- `mbus` ends quietly when its output is closed early (`mbus decode … | head`) instead
+  of panicking.
 
 ## [0.1.1] - 2026-11-27
 

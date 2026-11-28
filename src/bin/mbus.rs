@@ -25,6 +25,17 @@ use mbus_kit::wired::Frame;
 use mbus_kit::wireless::{self, Format};
 use mbus_kit::{Application, Body, Header};
 
+/// `println!` that ends the process quietly when the reader has gone (`mbus … | head`),
+/// and with exit code 1 when stdout fails otherwise.
+macro_rules! out {
+    ($($arg:tt)*) => {{
+        let mut stdout = io::stdout().lock();
+        if let Err(e) = writeln!(stdout, $($arg)*) {
+            std::process::exit(i32::from(e.kind() != io::ErrorKind::BrokenPipe));
+        }
+    }};
+}
+
 const USAGE: &str = "\
 mbus — M-Bus and wireless M-Bus meters
 
@@ -159,11 +170,11 @@ fn run(args: &[String]) -> Result<(), Failure> {
         "search" => search(&o),
         "listen" => listen(&o),
         "help" | "-h" | "--help" => {
-            println!("{USAGE}");
+            out!("{USAGE}");
             Ok(())
         }
         "--version" | "version" => {
-            println!("mbus {}", env!("CARGO_PKG_VERSION"));
+            out!("mbus {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         other => Err(Failure::Usage(format!("unknown command {other}"))),
@@ -197,7 +208,7 @@ fn handle(app: &Application<'_>, ctx: &mut Ctx, fragments: Option<&mut Reassembl
                 }
             }
             if !ctx.keys.is_empty() && !ctx.json {
-                println!("  no key opens it ({:?})", e.security);
+                out!("  no key opens it ({:?})", e.security);
             }
             show(app, ctx);
         }
@@ -206,7 +217,7 @@ fn handle(app: &Application<'_>, ctx: &mut Ctx, fragments: Option<&mut Reassembl
                 Ok(Some(message)) => handle(&message, ctx, None),
                 Ok(None) => {
                     if !ctx.json {
-                        println!("  fragment {} (waiting for more)", app.afl.map_or(0, |a| a.fragment_id()));
+                        out!("  fragment {} (waiting for more)", app.afl.map_or(0, |a| a.fragment_id()));
                     }
                 }
                 Err(e) => eprintln!("mbus: fragment: {e}"),
@@ -219,7 +230,7 @@ fn handle(app: &Application<'_>, ctx: &mut Ctx, fragments: Option<&mut Reassembl
                 Ok(full) => show(&full, ctx),
                 Err(e) => {
                     if !ctx.json {
-                        println!("  compact frame: {e} (a full frame of this meter teaches the layout)");
+                        out!("  compact frame: {e} (a full frame of this meter teaches the layout)");
                     }
                     show(app, ctx);
                 }
@@ -242,7 +253,7 @@ fn handle(app: &Application<'_>, ctx: &mut Ctx, fragments: Option<&mut Reassembl
 
 fn show(app: &Application<'_>, ctx: &Ctx) {
     if ctx.json {
-        println!("{}", Json::new(app).rssi(ctx.rssi));
+        out!("{}", Json::new(app).rssi(ctx.rssi));
         return;
     }
     let mut line = String::new();
@@ -265,32 +276,32 @@ fn show(app: &Application<'_>, ctx: &Ctx) {
     if let Authenticity::Authenticated { counter } = app.authenticity {
         line.push_str(&format!(" (counter {counter})"));
     }
-    println!("{}", line.trim_start_matches(" · "));
+    out!("{}", line.trim_start_matches(" · "));
     match &app.body {
         Body::Records(records) => {
             let mut records = records.clone();
             for r in records.by_ref() {
                 match r {
                     Ok(r) if app.authenticity != Authenticity::None && !r.from_ciphertext => {
-                        println!("  {r}  (sent in the clear)");
+                        out!("  {r}  (sent in the clear)");
                     }
-                    Ok(r) => println!("  {r}"),
-                    Err(e) => println!("  record error: {e}"),
+                    Ok(r) => out!("  {r}"),
+                    Err(e) => out!("  record error: {e}"),
                 }
             }
             if let Some(m) = records.manufacturer_data().filter(|m| !m.is_empty()) {
-                println!("  manufacturer data: {m:02X?}");
+                out!("  manufacturer data: {m:02X?}");
             }
         }
         Body::Encrypted(e) => {
-            println!("  encrypted · {:?} · {} bytes (pass --key)", e.security, e.data.len())
+            out!("  encrypted · {:?} · {} bytes (pass --key)", e.security, e.data.len())
         }
-        Body::Compact(c) => println!("  compact frame · signature {:04X}", c.signature),
-        Body::Format(f) => println!("  format frame · signature {:04X} (remembered)", f.signature),
-        Body::Fragment(d) => println!("  fragment · {} bytes", d.len()),
-        Body::ApplicationError(b) => println!("  application error {b:02X?}"),
-        Body::Alarm(b) => println!("  alarm {b:02X?}"),
-        Body::Empty => println!("  no application data"),
+        Body::Compact(c) => out!("  compact frame · signature {:04X}", c.signature),
+        Body::Format(f) => out!("  format frame · signature {:04X} (remembered)", f.signature),
+        Body::Fragment(d) => out!("  fragment · {} bytes", d.len()),
+        Body::ApplicationError(b) => out!("  application error {b:02X?}"),
+        Body::Alarm(b) => out!("  alarm {b:02X?}"),
+        Body::Empty => out!("  no application data"),
     }
 }
 
@@ -337,13 +348,13 @@ fn decode(o: &Options) -> Result<(), Failure> {
             .collect();
         if let Err(e) = decode_one(&bytes, this_format, &mut ctx, &mut fragments) {
             if ctx.json {
-                println!("{{\"error\":{}}}", JsonString(&e.to_string()));
+                out!("{{\"error\":{}}}", JsonString(&e.to_string()));
             } else {
-                println!("error: {e}");
+                out!("error: {e}");
             }
         }
         if !ctx.json {
-            println!();
+            out!();
         }
     }
     Ok(())
@@ -360,7 +371,7 @@ fn decode_one(
         let Some((frame, _)) = Frame::parse(bytes)? else { return Err(mbus_kit::Error::UnexpectedEnd) };
         let Frame::Long { ci, data, .. } = frame else {
             if !ctx.json {
-                println!("{frame:?}");
+                out!("{frame:?}");
             }
             return Ok(());
         };
@@ -481,7 +492,7 @@ fn read(o: &Options) -> Result<(), Failure> {
     let Some(outcome) = incomplete else { return Ok(()) };
     let msg = format!("incomplete readout after {} telegram(s): {outcome}", telegrams.len());
     if o.json {
-        println!("{{\"error\":{}}}", JsonString(&msg));
+        out!("{{\"error\":{}}}", JsonString(&msg));
     }
     Err(Failure::Run(msg))
 }
@@ -494,23 +505,23 @@ fn search(o: &Options) -> Result<(), Failure> {
     let found = bus.search()?;
     for meter in &found.meters {
         if o.json {
-            println!("{{\"meter\":{}}}", JsonAddress(meter));
+            out!("{{\"meter\":{}}}", JsonAddress(meter));
         } else {
-            println!("{meter}");
+            out!("{meter}");
         }
     }
     for id in &found.ambiguous {
         if o.json {
-            println!("{{\"ambiguous\":{}}}", JsonString(&id.to_string()));
+            out!("{{\"ambiguous\":{}}}", JsonString(&id.to_string()));
         } else {
-            println!("{id}: several meters share this ID (use their fabrication numbers)");
+            out!("{id}: several meters share this ID (use their fabrication numbers)");
         }
     }
     for id in &found.unreadable {
         if o.json {
-            println!("{{\"unreadable\":{}}}", JsonString(&id.to_string()));
+            out!("{{\"unreadable\":{}}}", JsonString(&id.to_string()));
         } else {
-            println!("{id}: a meter answers this selection but does not name itself");
+            out!("{id}: a meter answers this selection but does not name itself");
         }
     }
     if !found.complete {
